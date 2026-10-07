@@ -54,7 +54,7 @@ Podcast clients often fetch audio using multiple byte ranges, retries and resume
 The current implementation calculates:
 
 ```text
-client_digest = HMAC(secret, IP + User-Agent)
+client_digest = HMAC(secret, recipient_id + IP + User-Agent)
 session_bucket = floor(now / 30 minutes)
 ```
 
