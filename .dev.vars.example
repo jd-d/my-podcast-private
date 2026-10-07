@@ -1,0 +1,4 @@
+# Local development only. Copy to .dev.vars. Never commit the real file.
+# Generate at least 32 random bytes, e.g.:
+# node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+APP_HMAC_SECRET=replace-with-a-long-random-secret
