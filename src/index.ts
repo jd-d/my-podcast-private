@@ -75,7 +75,7 @@ export default {
         return response("Not Found", 404);
       }
 
-      const clientDigest = await digestClient(request, env.APP_HMAC_SECRET);
+      const clientDigest = await digestClient(request, env.APP_HMAC_SECRET, recipient.id);
 
       if (parts.length === 3 && parts[2] === "feed.xml") {
         if (request.method === "HEAD") {
@@ -361,10 +361,14 @@ async function recordActivity(
     .run();
 }
 
-async function digestClient(request: Request, secret: string): Promise<string> {
+async function digestClient(
+  request: Request,
+  secret: string,
+  recipientId: number,
+): Promise<string> {
   const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
   const ua = request.headers.get("User-Agent") ?? "unknown";
-  return hmacHex(secret, `client:${ip}\n${ua}`);
+  return hmacHex(secret, `client:${recipientId}:${ip}\n${ua}`);
 }
 
 async function hmacHex(secret: string, value: string): Promise<string> {
