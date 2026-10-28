@@ -21,7 +21,7 @@ npm run db:migrate:local
 npm run db:migrate:remote
 ```
 
-Both migrations `0001_initial.sql` and `0002_import_jobs.sql` are required.
+All three migrations `0001_initial.sql`, `0002_import_jobs.sql` and `0003_session_accounting.sql` are required.
 
 ## Create independent Worker secrets
 
