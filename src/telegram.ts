@@ -44,7 +44,7 @@ export async function telegramWebhook(request: Request, env: AppEnv): Promise<Re
     return new Response("OK");
   }
 
-  if (!Number.isSafeInteger(update.update_id)) return new Response("Bad request", { status: 400 });
+  if (typeof update.update_id !== "number" || !Number.isSafeInteger(update.update_id)) return new Response("Bad request", { status: 400 });
   const inserted = await env.DB.prepare(
     "INSERT OR IGNORE INTO telegram_updates (update_id) VALUES (?)",
   ).bind(update.update_id).run();
@@ -99,10 +99,13 @@ async function handleCommand(text: string, request: Request, env: AppEnv): Promi
       `SELECT r.id,r.alias,r.status,r.download_limit,
           COALESCE(a.feed_requests,0) AS feeds,
           COALESCE(a.audio_requests,0) AS audio,
+          COALESCE((SELECT SUM(u.download_count) FROM recipient_episode_usage u WHERE u.recipient_id=r.id),0)
+            + COALESCE((SELECT u.download_count FROM recipient_usage u WHERE u.recipient_id=r.id),0)
+            AS downloads,
           a.last_audio_at
        FROM recipients r LEFT JOIN recipient_activity a ON a.recipient_id=r.id
        ORDER BY r.id DESC LIMIT 50`,
-    ).all<{ id: number; alias: string; status: string; download_limit: number; feeds: number; audio: number; last_audio_at: string | null }>();
+    ).all<{ id: number; alias: string; status: string; download_limit: number; feeds: number; audio: number; downloads: number; last_audio_at: string | null }>();
     if (!rows.results.length) return "No recipients yet. Use /add <alias>.";
     return rows.results.map(r => `#${r.id} ${r.alias} [${r.status}] cap=${r.download_limit}, feeds=${r.feeds}, audio requests=${r.audio}, last=${r.last_audio_at ?? "never"}`).join("\n").slice(0, 3900);
   }
