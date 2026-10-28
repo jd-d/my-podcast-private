@@ -60,7 +60,7 @@ This is the canonical current handoff. Do not start by rewriting the architectur
 
 ## P0 safety gaps to evaluate before real content
 
-1. Current download-session INSERT + UPDATE is not a single atomic transaction. Concurrent requests can race; correct this if cap must be strict. D1 batch is transactional but consider careful conditional SQL or a Durable Object if necessary.
+1. Session accounting now marks charged sessions and prevents uncharged duplicates from being accepted, while quota increments use conditional SQL UPDATE. Verify concurrent behavior in integration tests; D1 steps still span multiple calls and failed requests may consume an allowance.
 2. Job completion uses a batch with a conditional UPDATE after inserting an episode: verify it cannot publish after lease expiry or a race, and enforce that exactly one row transitioned.
 3. Telegram `telegram_updates` de-duplicates before command execution. If a Telegram send or D1 command fails, that update will not automatically retry. Decide on explicit error replay/audit semantics.
 4. Ensure Worker/Cloudflare logs and Telegram messages do not accidentally expose bearer credentials.
