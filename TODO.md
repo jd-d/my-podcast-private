@@ -9,7 +9,7 @@
 - [ ] Set secrets/vars, deploy Worker, register Telegram webhook.
 - [ ] Configure and start systemd service on Pi 3B+.
 - [ ] Prove YouTube/M4A passthrough and FFmpeg fallback.
-- [ ] Test bot admin commands, owner allowlist, and direct HTTP attacks.
+- [ ] Test bot admin commands, owner allowlist, direct MP3/M4A uploads and direct HTTP attacks.
 - [ ] Test RSS in Apple Podcasts and Overcast, including Range and cap behavior.
 - [ ] Verify private R2 permissions, logging, sensitive URL handling.
 - [ ] Harden job completion lease race and download counter concurrency.
