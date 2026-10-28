@@ -53,6 +53,8 @@ npm test
 /help                         show commands
 ```
 
+For small MP3/M4A recordings under 20 MB, send the file directly to the bot. The Worker publishes it immediately to private R2 without involving the Pi.
+
 Admin commands only work from your configured numeric Telegram user ID **in a private chat**. Telegram retains messages containing shared feed URLs, so only send to recipients via an appropriately trusted channel.
 
 ## Security and limits
