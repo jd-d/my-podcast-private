@@ -6,7 +6,6 @@ import {
   parsePositiveInt,
   safeEpisodeId,
   secondsToItunesDuration,
-  sessionBucket,
 } from "../src/lib";
 
 describe("token validation", () => {
@@ -48,7 +47,7 @@ describe("routing helpers", () => {
     expect(parsePositiveInt("0", 30)).toBe(30);
   });
 
-  it("groups time into session windows", () => {
-    expect(sessionBucket(30 * 60_000, 30)).toBe(1);
+  it("removes control characters forbidden in XML 1.0", () => {
+    expect(escapeXml("valid\u0001 title\uffff")).toBe("valid title");
   });
 });

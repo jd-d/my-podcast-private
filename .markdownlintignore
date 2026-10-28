@@ -1,0 +1,8 @@
+node_modules/
+.venv/
+.git/
+.wrangler/
+tmp/
+artifacts/
+private/
+secrets/

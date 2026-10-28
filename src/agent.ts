@@ -1,8 +1,9 @@
 import type { AppEnv } from "./security";
 import { constantTimeEqual, hmacHex } from "./security";
 import { sendTelegram } from "./telegram";
+import { readJsonObject, RequestError } from "./http";
 
-type Job = { id: string; source_url: string; status: string; lease_digest: string | null };
+type Job = { id: string; source_url: string; status: string; lease_digest: string | null; upload_prefix: string | null };
 type Completion = {
   lease?: string;
   key?: string;
@@ -26,38 +27,41 @@ export async function agentApi(request: Request, env: AppEnv): Promise<Response>
   const supplied = request.headers.get("Authorization") ?? "";
   if (!constantTimeEqual(supplied, `Bearer ${env.PI_AGENT_TOKEN}`)) return json({ error: "Unauthorized" }, 401);
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
-  if (Number(request.headers.get("Content-Length") ?? "0") > 20_000) return json({ error: "Too large" }, 413);
+  let payload: Completion & { error?: string };
+  try { payload = await readJsonObject(request, 20_000); }
+  catch (error) {
+    if (error instanceof RequestError) return json({ error: error.message }, error.status);
+    throw error;
+  }
   const path = new URL(request.url).pathname;
 
   if (path === "/agent/claim") {
     // One atomic SQL UPDATE claims the oldest pending or expired job.
     const lease = crypto.randomUUID() + "-" + crypto.randomUUID();
     const digest = await hmacHex(env.APP_HMAC_SECRET, `lease:${lease}`);
+    const attempt = crypto.randomUUID();
     const job = await env.DB.prepare(
       `UPDATE import_jobs
        SET status='processing',lease_digest=?,lease_expires_at=datetime('now','+30 minutes'),
-           attempts=attempts+1,updated_at=datetime('now')
+           attempts=attempts+1,updated_at=datetime('now'),upload_prefix='imports/' || id || '/' || ?
        WHERE id=(
          SELECT id FROM import_jobs
-         WHERE status='pending' OR (status='processing' AND lease_expires_at < datetime('now'))
+         WHERE status='pending' OR (status='processing' AND lease_expires_at <= datetime('now'))
          ORDER BY created_at ASC LIMIT 1
        )
-       RETURNING id,source_url`,
-    ).bind(digest).first<{id:string;source_url:string}>();
-    return json({ job: job ? { id: job.id, url: job.source_url, lease } : null });
+       RETURNING id,source_url,upload_prefix`,
+    ).bind(digest,attempt).first<{id:string;source_url:string;upload_prefix:string}>();
+    return json({ job: job ? { id: job.id, url: job.source_url, lease, upload_prefix: job.upload_prefix } : null });
   }
 
   const match = /^\/agent\/jobs\/([a-f0-9-]{36})\/(heartbeat|complete|fail)$/.exec(path);
   if (!match) return json({ error: "Not found" }, 404);
   const [, id, operation] = match;
-  let payload: Completion & { error?: string };
-  try { payload = await request.json() as Completion & { error?: string }; }
-  catch { return json({ error: "Bad JSON" }, 400); }
-  if (!payload.lease || payload.lease.length > 120) return json({ error: "Invalid lease" }, 403);
+  if (typeof payload.lease !== "string" || !payload.lease || payload.lease.length > 120) return json({ error: "Invalid lease" }, 403);
   const digest = await hmacHex(env.APP_HMAC_SECRET, `lease:${payload.lease}`);
 
   const job = await env.DB.prepare(
-    `SELECT id,source_url,status,lease_digest FROM import_jobs
+    `SELECT id,source_url,status,lease_digest,upload_prefix FROM import_jobs
      WHERE id=? AND status='processing' AND lease_expires_at > datetime('now')`,
   ).bind(id).first<Job>();
   if (!job || !job.lease_digest || !constantTimeEqual(digest, job.lease_digest)) {
@@ -86,7 +90,7 @@ export async function agentApi(request: Request, env: AppEnv): Promise<Response>
          AND lease_expires_at > datetime('now')`,
     ).bind(error,id,digest).run();
     if ((result.meta.changes ?? 0) === 0) return json({ error: "Invalid lease" }, 409);
-    await notifySafely(env, `Podcast import failed (${id.slice(0,8)}): ${error}`);
+    await notifySafely(env, `Podcast import failed (${id}): ${error}`);
     return json({ ok: true });
   }
 
@@ -94,7 +98,8 @@ export async function agentApi(request: Request, env: AppEnv): Promise<Response>
   const title = typeof payload.title === "string" ? payload.title.trim().slice(0, 240) : "";
   const desc = typeof payload.description === "string" ? payload.description.slice(0, 4000) : "";
   const mime = payload.mime_type;
-  if (!key || !new RegExp(`^imports/${id}/[A-Za-z0-9._-]{1,150}\\.(?:m4a|mp3)$`).test(key)) {
+  if (typeof key !== "string" || !job.upload_prefix ||
+      ![`${job.upload_prefix}/audio.m4a`, `${job.upload_prefix}/audio.mp3`].includes(key)) {
     return json({ error: "Unsafe object key" }, 400);
   }
   if (!title || !["audio/mp4", "audio/mpeg"].includes(mime ?? "")) {
@@ -140,7 +145,7 @@ export async function agentApi(request: Request, env: AppEnv): Promise<Response>
   } catch {
     return json({ error: "Could not publish episode" }, 409);
   }
-  await notifySafely(env, `Podcast episode published: ${title}\nJob: ${id.slice(0,8)}`);
+  await notifySafely(env, `Podcast episode published: ${title}\nJob: ${id}`);
   return json({ ok: true, episode_id: id, size: object.size });
 }
 

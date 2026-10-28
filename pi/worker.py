@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
+import signal
 import shutil
 import sys
 import subprocess
@@ -25,6 +27,7 @@ from urllib.parse import urlparse
 
 import boto3
 from boto3.s3.transfer import TransferConfig
+from botocore.config import Config
 
 LOG = logging.getLogger("podcast-pi-agent")
 ALLOWED_HOSTS = frozenset({
@@ -60,30 +63,113 @@ def request_api(api_base: str, token: str, path: str, payload: dict[str, Any]) -
         return result
 
 
-def execute(args: list[str], *, timeout: int) -> str:
-    # subprocess.run avoids shell injection. Logs never include raw source URLs.
-    result = subprocess.run(
-        args, check=False, capture_output=True, text=True,
-        timeout=timeout, encoding="utf-8", errors="replace",
-    )
-    if result.returncode:
-        raise RuntimeError(f"{Path(args[0]).name} failed (exit {result.returncode})")
-    return result.stdout.strip()
+class LeaseLost(RuntimeError):
+    pass
 
 
-def prepare_audio(source_url: str, directory: Path, max_mb: int) -> tuple[Path, dict[str, Any]]:
+class LeaseGuard:
+    """Never work beyond a locally known lease, including during an outage."""
+
+    def __init__(self) -> None:
+        self.lost = threading.Event()
+        self.deadline = time.monotonic() + 1800 - 60
+
+    def check(self, _bytes: int = 0) -> None:
+        if self.lost.is_set() or time.monotonic() >= self.deadline:
+            self.lost.set()
+            raise LeaseLost("Job lease lost")
+
+    def renew(self, started_at: float) -> None:
+        # Request duration must not extend the server's actual lease locally.
+        self.deadline = started_at + 1800 - 60
+
+
+def execute(args: list[str], *, timeout: int, guard: LeaseGuard | None = None,
+            output_limit: tuple[Path, int] | None = None) -> str:
+    # No shell and no downloader stderr/URLs in diagnostics. Use a temporary
+    # stdout file rather than retaining unbounded subprocess output in RAM.
+    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as output:
+        process = subprocess.Popen(args, stdout=output, stderr=subprocess.DEVNULL,
+                                   start_new_session=(os.name == "posix"))
+        deadline = time.monotonic() + timeout
+        try:
+            while process.poll() is None:
+                if guard:
+                    guard.check()
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Tool timed out")
+                if output_limit:
+                    path, maximum = output_limit
+                    if path.exists() and path.stat().st_size > maximum:
+                        raise RuntimeError("Converted file exceeds configured size limit")
+                time.sleep(0.2)
+            if guard:
+                guard.check()
+            if process.returncode:
+                raise RuntimeError(f"{Path(args[0]).name} failed (exit {process.returncode})")
+            output.seek(0)
+            return output.read(100_000).strip()
+        except BaseException:
+            if process.poll() is None:
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGTERM)
+                else:
+                    process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    if os.name == "posix":
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                    process.wait()
+            raise
+
+
+def downloader_binary() -> str:
+    return os.getenv("YTDLP_BINARY", str(Path(sys.executable).with_name("yt-dlp")))
+
+
+def js_runtime() -> tuple[str, str]:
+    runtime = os.getenv("YTDLP_JS_RUNTIME", "deno")
+    name, _, path = runtime.partition(":")
+    if name not in {"deno", "node"}:
+        raise RuntimeError("YTDLP_JS_RUNTIME must be deno or node, optionally :/absolute/path")
+    return runtime, path or name
+
+
+def check_tools() -> None:
+    runtime, binary = js_runtime()
+    for tool in (downloader_binary(), "ffmpeg", binary):
+        if shutil.which(tool) is None:
+            raise RuntimeError("Required executable not available")
+    version = execute([binary, "--version"], timeout=10)
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", version)
+    if not match:
+        raise RuntimeError("Cannot determine JavaScript runtime version")
+    minimum = (2, 3, 0) if runtime.split(":", 1)[0] == "deno" else (22, 0, 0)
+    if tuple(map(int, match.groups())) < minimum:
+        raise RuntimeError("JavaScript runtime is too old")
+
+
+def prepare_audio(source_url: str, directory: Path, max_mb: int, guard: LeaseGuard | None = None) -> tuple[Path, dict[str, Any]]:
     check_video_url(source_url)
-    yt_dlp = os.getenv("YTDLP_BINARY", str(Path(sys.executable).with_name("yt-dlp")))
+    if max_mb < 1 or max_mb > 2048:
+        raise RuntimeError("MAX_DOWNLOAD_MB must be between 1 and 2048")
+    if shutil.disk_usage(directory).free < (2 * max_mb + 64) * 1024 * 1024:
+        raise RuntimeError("Insufficient temporary disk space")
+    runtime, _ = js_runtime()
     args = [
-        yt_dlp, "--ignore-config", "--no-playlist", "--no-progress",
+        downloader_binary(), "--ignore-config", "--no-playlist", "--no-progress",
         "--no-warnings", "--no-overwrites", "--write-info-json",
+        "--js-runtimes", runtime,
         "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3",
         "--max-filesize", f"{max_mb}M", "-f", "ba[ext=m4a]/ba",
         "--paths", str(directory), "-o", "%(id)s.%(ext)s",
         "--print", "after_move:filepath", source_url,
     ]
     # Python-installed yt-dlp[default] supplies EJS; current Deno must be in PATH.
-    stdout = execute(args, timeout=3600)
+    stdout = execute(args, timeout=3600, guard=guard)
     candidates = [Path(line) for line in stdout.splitlines() if line.strip()]
     audio = next((p for p in reversed(candidates) if p.is_file()), None)
     if audio is None or audio.parent.resolve() != directory.resolve():
@@ -104,33 +190,61 @@ def prepare_audio(source_url: str, directory: Path, max_mb: int) -> tuple[Path, 
         "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
         "-i", str(audio), "-vn", "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", str(converted),
-    ], timeout=3600)
+    ], timeout=3600, guard=guard, output_limit=(converted, max_mb * 1024 * 1024))
     if not converted.is_file() or converted.stat().st_size < 1:
         raise RuntimeError("FFmpeg produced no audio")
+    if converted.stat().st_size > max_mb * 1024 * 1024:
+        raise RuntimeError("Converted file exceeds configured size limit")
     return converted, metadata
 
 
-def upload_to_r2(file: Path, job_id: str) -> tuple[str, str]:
+def upload_to_r2(file: Path, upload_prefix: str, guard: LeaseGuard) -> tuple[str, str]:
     ext = file.suffix.lower()
     if ext not in {".mp3", ".m4a"}:
         raise RuntimeError("Unexpected audio extension")
     mime = "audio/mpeg" if ext == ".mp3" else "audio/mp4"
-    key = f"imports/{job_id}/audio{ext}"
+    guard.check()
+    key = f"{upload_prefix}/audio{ext}"
     client = boto3.client(
         "s3",
         endpoint_url=f"https://{required('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com",
         aws_access_key_id=required("R2_ACCESS_KEY_ID"),
         aws_secret_access_key=required("R2_SECRET_ACCESS_KEY"),
         region_name="auto",
+        config=Config(connect_timeout=10, read_timeout=30, retries={"max_attempts": 3}),
     )
     client.upload_file(
         str(file), required("R2_BUCKET"), key,
         ExtraArgs={"ContentType": mime},
+        Callback=guard.check,
         Config=TransferConfig(max_concurrency=1, use_threads=False,
                               multipart_threshold=8 * 1024 * 1024,
                               multipart_chunksize=8 * 1024 * 1024),
     )
+    guard.check()
     return key, mime
+
+
+def keep_lease(stop: threading.Event, guard: LeaseGuard, api_base: str, token: str,
+               job_id: str, lease: str) -> None:
+    while not stop.wait(min(120, max(0, guard.deadline - time.monotonic()))):
+        try:
+            guard.check()
+            started_at = time.monotonic()
+            response = request_api(api_base, token, f"/agent/jobs/{job_id}/heartbeat", {"lease": lease})
+            if not response.get("ok", False):
+                guard.lost.set()
+                return
+            guard.renew(started_at)
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403, 409}:
+                guard.lost.set()
+                return
+            LOG.warning("Heartbeat temporarily unavailable for job %s", job_id[:8])
+        except LeaseLost:
+            return
+        except Exception:
+            LOG.warning("Heartbeat temporarily unavailable for job %s", job_id[:8])
 
 
 def process_job(job: dict[str, Any], api_base: str, token: str, max_mb: int) -> None:
@@ -138,36 +252,30 @@ def process_job(job: dict[str, Any], api_base: str, token: str, max_mb: int) -> 
     if not re.fullmatch(r"[a-f0-9-]{36}", job_id):
         raise RuntimeError("Unexpected job ID")
     check_video_url(job["url"])
+    upload_prefix = job.get("upload_prefix", "")
+    if not re.fullmatch(r"imports/" + re.escape(job_id) + r"/[a-f0-9-]{36}", upload_prefix):
+        raise RuntimeError("Unexpected upload prefix")
     stop = threading.Event()
-    lost_lease = threading.Event()
+    guard = LeaseGuard()
 
-    def heartbeat() -> None:
-        while not stop.wait(120):
-            try:
-                response = request_api(api_base, token, f"/agent/jobs/{job_id}/heartbeat", {"lease": lease})
-                if not response.get("ok", False):
-                    lost_lease.set()
-                    return
-            except Exception:
-                LOG.warning("Heartbeat failed for job %s", job_id[:8])
-
-    thread = threading.Thread(target=heartbeat, daemon=True)
+    thread = threading.Thread(target=keep_lease, args=(stop, guard, api_base, token, job_id, lease), daemon=True)
     thread.start()
+    stage = "download"
     try:
         with tempfile.TemporaryDirectory(prefix="podcast-import-") as workspace:
             directory = Path(workspace)
             LOG.info("Processing job %s", job_id[:8])
-            audio, metadata = prepare_audio(job["url"], directory, max_mb)
-            if lost_lease.is_set():
-                raise RuntimeError("Job lease was lost before upload")
-            key, mime = upload_to_r2(audio, job_id)
-            if lost_lease.is_set():
-                raise RuntimeError("Job lease was lost after upload")
+            audio, metadata = prepare_audio(job["url"], directory, max_mb, guard)
+            guard.check()
+            stage = "upload"
+            key, mime = upload_to_r2(audio, upload_prefix, guard)
+            guard.check()
             title = str(metadata.get("title") or "Imported audio")[:240]
             description = str(metadata.get("description") or "")[:4000]
             duration = metadata.get("duration")
-            if not isinstance(duration, (float, int)) or duration < 0:
+            if isinstance(duration, bool) or not isinstance(duration, (float, int)) or not math.isfinite(duration) or duration < 0:
                 duration = None
+            stage = "publication"
             reply = request_api(api_base, token, f"/agent/jobs/{job_id}/complete", {
                 "lease": lease, "key": key, "title": title,
                 "description": description, "mime_type": mime,
@@ -177,9 +285,10 @@ def process_job(job: dict[str, Any], api_base: str, token: str, max_mb: int) -> 
                 raise RuntimeError("Worker declined completion")
             LOG.info("Published job %s as an episode (%s)", job_id[:8], mime)
     except Exception as exc:
-        error = str(exc)
-        error = re.sub(r"https?://\S+", "[URL]", error)[:180]
-        LOG.error("Job %s failed: %s", job_id[:8], error)
+        # Exceptions from S3, HTTP and tools may contain secrets or private
+        # endpoints. Report only an application-owned category.
+        error = "Lease lost" if isinstance(exc, LeaseLost) else f"Import failed during {stage}; inspect local configuration and retry"
+        LOG.error("Job %s failed during %s (%s)", job_id[:8], stage, type(exc).__name__)
         try:
             request_api(api_base, token, f"/agent/jobs/{job_id}/fail", {
                 "lease": lease, "error": error
@@ -199,12 +308,20 @@ def main() -> None:
     token = required("PI_AGENT_TOKEN")
     max_mb = int(os.getenv("MAX_DOWNLOAD_MB", "300"))
     interval = max(10, int(os.getenv("POLL_INTERVAL_SECONDS", "60")))
+    if not 1 <= max_mb <= 2048:
+        raise RuntimeError("MAX_DOWNLOAD_MB must be between 1 and 2048")
     # Fail fast if tools and S3 settings are missing.
     for name in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
         required(name)
-    for tool in (os.getenv("YTDLP_BINARY", "yt-dlp"), "ffmpeg"):
-        if shutil.which(tool) is None:
-            raise RuntimeError(f"Required executable not available: {tool}")
+    check_tools()
+    # systemd StateDirectory provides a shared, writable lock outside PrivateTmp.
+    import fcntl
+    lock_path = Path(os.getenv("STATE_DIRECTORY", "/var/lib/my-podcast-private")) / "podcast-agent.lock"
+    instance_lock = lock_path.open("a")
+    try:
+        fcntl.flock(instance_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise RuntimeError("Another Pi agent is already running") from None
     while True:
         try:
             result = request_api(api_base, token, "/agent/claim", {})

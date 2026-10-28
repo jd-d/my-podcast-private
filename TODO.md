@@ -4,28 +4,32 @@
 
 ## P0 validation and deployment
 
-- [ ] Fix typecheck / CI failures, commit fixes.
-- [ ] Apply migrations 0001 and 0002 and provision private R2.
+- [x] Fix runtime review findings F1-F6 with local regression coverage.
+- [ ] Commit verified fixes and confirm branch CI.
+- [ ] Apply migrations 0001 through 0006 and provision private R2;
+  existing deployment token needs R2 write permission.
 - [ ] Set secrets/vars, deploy Worker, register Telegram webhook.
 - [ ] Configure and start systemd service on Pi 3B+.
 - [ ] Prove YouTube/M4A passthrough and FFmpeg fallback.
 - [ ] Test bot admin commands, owner allowlist, direct MP3/M4A uploads and direct HTTP attacks.
 - [ ] Test RSS in Apple Podcasts and Overcast, including Range and cap behavior.
 - [ ] Verify private R2 permissions, logging, sensitive URL handling.
-- [ ] Harden job completion lease race and download counter concurrency.
+- [x] Fence stale uploads by attempt and make quota/session charging transactional.
+- [x] Resolve source findings F1-F6 from the
+  [readiness review](reviews/2026-10-28-readiness-review.md); external acceptance remains pending.
 - [ ] Validate Pi low-power stability and memory usage.
 
 ## P1 operations and reliability
 
 - [ ] Job failure retry and orphan-object cleanup policies.
 - [ ] Offline / crash / heartbeat tests.
-- [ ] R2 backup and D1 backup/restore.
+- [ ] Rehearse documented D1 backup/restore and establish R2 audio backup.
 - [ ] Status report with per-episode download usage.
 - [ ] Monitoring and sanitized failures.
 - [ ] Owner-only CLI for upload without Telegram 20MB Bot API restriction.
 - [ ] Allow optional file-specific recipient permissions.
 - [ ] Add explicit claim fairness and job timeout policy.
-- [ ] CI integration tests against local D1/R2 emulator.
+- [x] Add CI integration tests against local D1/R2 plus Pi behavioral tests.
 
 ## P2 UX
 
@@ -35,4 +39,5 @@
 - [ ] Client/device coarse anomaly alerts.
 - [ ] Cleanup retention and token rotation procedure.
 
-Historical initial scaffolding remains in commit history, but architecture is now Telegram + Pi importer, not yt-dlp on a Worker.
+Historical initial scaffolding remains in commit history, but architecture is now Telegram + Pi
+importer, not yt-dlp on a Worker.

@@ -16,12 +16,13 @@ const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
     url: target,
     secret_token: secret,
     allowed_updates: ["message"],
-    drop_pending_updates: true
+    max_connections: 1,
+    drop_pending_updates: process.argv.includes("--drop-pending")
   }),
 });
 const result = await res.json();
 if (!res.ok || !result.ok) {
-  console.error("Telegram webhook registration failed", res.status, result.description);
+  console.error("Telegram webhook registration failed", res.status, result.error_code);
   process.exit(1);
 }
 console.log("Telegram webhook registered:", target);

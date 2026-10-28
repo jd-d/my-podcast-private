@@ -60,3 +60,30 @@ export function publicOrigin(request: Request, env: AppEnv): string {
     throw new Error("PUBLIC_BASE_URL must be HTTPS");
   return url.origin;
 }
+
+async function replyKey(secret: string): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  const source = await crypto.subtle.importKey("raw", encoder.encode(secret), "HKDF", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({
+    name: "HKDF", hash: "SHA-256", salt: encoder.encode("my-podcast-private"),
+    info: encoder.encode("telegram-outbox-v1"),
+  }, source, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+
+export async function encryptReply(secret: string, updateId: number, text: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt({
+    name: "AES-GCM", iv, additionalData: new TextEncoder().encode(`telegram:${updateId}`),
+  }, await replyKey(secret), new TextEncoder().encode(text)));
+  return JSON.stringify({ iv: Array.from(iv), data: btoa(String.fromCharCode(...encrypted)) });
+}
+
+export async function decryptReply(secret: string, updateId: number, serialized: string): Promise<string> {
+  const value = JSON.parse(serialized) as { iv: number[]; data: string };
+  const bytes = Uint8Array.from(atob(value.data), char => char.charCodeAt(0));
+  const plain = await crypto.subtle.decrypt({
+    name: "AES-GCM", iv: new Uint8Array(value.iv),
+    additionalData: new TextEncoder().encode(`telegram:${updateId}`),
+  }, await replyKey(secret), bytes);
+  return new TextDecoder().decode(plain);
+}

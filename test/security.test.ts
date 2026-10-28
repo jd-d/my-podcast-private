@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { constantTimeEqual, isYoutubeUrl, randomToken } from "../src/security";
+import { constantTimeEqual, isYoutubeUrl, randomToken, encryptReply, decryptReply } from "../src/security";
+
+describe("encrypted Telegram outbox", () => {
+  it("authenticates the secret and update ID and uses fresh IVs", async () => {
+    const a=await encryptReply("synthetic-secret",1,"synthetic-private-feed");
+    const b=await encryptReply("synthetic-secret",1,"synthetic-private-feed");
+    expect(a).not.toBe(b);
+    expect(a).not.toContain("synthetic-private-feed");
+    expect(await decryptReply("synthetic-secret",1,a)).toBe("synthetic-private-feed");
+    await expect(decryptReply("wrong-secret",1,a)).rejects.toThrow();
+    await expect(decryptReply("synthetic-secret",2,a)).rejects.toThrow();
+  });
+});
 
 describe("recipient token generation", () => {
   it("uses 32 random bytes encoded as 43 base64url characters", () => {

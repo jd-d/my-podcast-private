@@ -4,7 +4,8 @@
 
 1. Open a private conversation with Telegram's verified **@BotFather** account.
 2. Create a bot via `/newbot`; save its Bot API token as a secret.
-3. Find your **numeric Telegram user ID** (not username). Verify it carefully from a trusted `getUpdates` response or reputable user-ID helper.
+3. Find your **numeric Telegram user ID** (not username). Verify it carefully from a trusted
+   `getUpdates` response or reputable user-ID helper.
 4. Open a private chat with the new bot and send `/start`.
 
 ## Worker configuration
@@ -18,7 +19,8 @@ TELEGRAM_OWNER_USER_ID=<decimal owner id>
 PUBLIC_BASE_URL=https://<worker>.workers.dev
 ```
 
-Use `wrangler secret put` for token/secret values. User ID and public base URL are not themselves secrets but should be configured correctly.
+Use `wrangler secret put` for token/secret values. User ID and public base URL are not themselves
+secrets but should be configured correctly.
 
 To generate secrets in a development terminal:
 
@@ -26,7 +28,8 @@ To generate secrets in a development terminal:
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
 
-Use a **different** value for each of `APP_HMAC_SECRET`, `TELEGRAM_WEBHOOK_SECRET` and `PI_AGENT_TOKEN`.
+Use a **different** value for each of `APP_HMAC_SECRET`, `TELEGRAM_WEBHOOK_SECRET` and
+`PI_AGENT_TOKEN`.
 
 Deploy Worker first; then run:
 
@@ -34,7 +37,25 @@ Deploy Worker first; then run:
 npm run telegram:webhook
 ```
 
-This calls Telegram's `setWebhook` with secret header authentication and requests only `message` updates. Initial registration intentionally clears pending messages; it should not be repeated unnecessarily in a busy bot.
+Registration authenticates the webhook, requests only message updates and uses
+one connection to reduce command reordering. Pending updates are preserved.
+Discard them only when deliberately requested:
+
+```bash
+npm run telegram:webhook -- --drop-pending
+```
+
+A command's database changes and encrypted reply commit together. Failed delivery
+returns 503 so Telegram can retry the same reply without repeating the command.
+Pending replies use AES-GCM with a purpose-specific key derived from
+`APP_HMAC_SECRET`; plaintext feed tokens never enter D1. The ciphertext is cleared
+after delivery. Duplicate replies remain possible if Telegram accepted a message
+but its response was lost. Telegram's retry window is finite; inspect sanitized
+failure events and resend deliberately if automatic retries stop.
+
+The `/jobs` response and import failure notifications include full job UUIDs for
+`/retry`. Keep `APP_HMAC_SECRET` backed up privately: changing it invalidates issued
+feed digests and makes pending replies unreadable.
 
 ## Security testing
 
@@ -43,14 +64,18 @@ This calls Telegram's `setWebhook` with secret header authentication and request
 - Commands sent from groups are ignored, including messages from the owner.
 - Direct calls to `POST /telegram` without the secret header are rejected.
 - The bot token and webhook secret never appear in Git or Worker URL paths.
-- Telegram bot chats are **not** end-to-end encrypted; recipient RSS links in bot messages are sensitive bearer credentials.
+- Telegram bot chats are **not** end-to-end encrypted; recipient RSS links in bot messages are
+  sensitive bearer credentials.
 
 ## Direct audio uploads
 
-Send an MP3 or M4A file under Telegram's 20 MB bot download limit to the owner's private bot chat. The Worker streams it into private R2 and publishes an episode without invoking the Pi. The audio title or filename becomes the episode title; a caption becomes its description.
+Send an MP3 or M4A file under Telegram's 20 MB bot download limit to the owner's private bot chat.
+The Worker streams it into private R2 and publishes an episode without invoking the Pi. The audio
+title or filename becomes the episode title; a caption becomes its description.
 
 For large or unsupported files use the Pi or an owner-side local upload tool.
 
 ## Commands
 
-See [README](../README.md). Initially prefer one owner only. Additional admin users would need a deliberate security redesign and proper audit behavior.
+See [README](../README.md). Initially prefer one owner only. Additional admin users would need a
+deliberate security redesign and proper audit behavior.
