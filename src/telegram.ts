@@ -5,6 +5,9 @@ type TelegramMessage = {
   from?: { id: number };
   chat?: { id: number; type: string };
   text?: string;
+  caption?: string;
+  audio?: { file_id: string; file_size?: number; file_name?: string; title?: string; duration?: number; mime_type?: string };
+  document?: { file_id: string; file_size?: number; file_name?: string; mime_type?: string };
 };
 type TelegramUpdate = { update_id?: number; message?: TelegramMessage };
 
@@ -40,7 +43,7 @@ export async function telegramWebhook(request: Request, env: AppEnv): Promise<Re
   // Reject group commands and forwarded messages from everyone except the owner.
   if (String(message?.from?.id ?? "") !== owner ||
       String(message?.chat?.id ?? "") !== owner ||
-      message?.chat?.type !== "private" || !message?.text) {
+      message?.chat?.type !== "private" || (!message?.text && !message?.audio && !message?.document)) {
     return new Response("OK");
   }
 
@@ -51,7 +54,9 @@ export async function telegramWebhook(request: Request, env: AppEnv): Promise<Re
   if (inserted.meta.changes === 0) return new Response("OK");
 
   try {
-    const reply = await handleCommand(message.text, request, env);
+    const reply = message.text
+      ? await handleCommand(message.text, request, env)
+      : await handleAudioUpload(message, env);
     await sendTelegram(env, reply);
   } catch {
     // Do not log message text, URLs or bearer tokens.
@@ -164,4 +169,57 @@ async function handleCommand(text: string, request: Request, env: AppEnv): Promi
     return result ? "Requeued failed job." : "No failed job with that ID.";
   }
   return "Unknown command. Use /help.";
+}
+
+async function handleAudioUpload(message: TelegramMessage, env: AppEnv): Promise<string> {
+  const item = message.audio ?? message.document;
+  if (!item) return "Send an MP3/M4A file or use /import <YouTube URL>.";
+  const fileName = "file_name" in item ? (item.file_name ?? "") : "";
+  const title = ("title" in item && item.title ? item.title : fileName.replace(/\.(m4a|mp3)$/i, "")) || "Shared audio";
+  const ext = fileName.toLowerCase().endsWith(".mp3") ? ".mp3"
+    : fileName.toLowerCase().endsWith(".m4a") ? ".m4a"
+    : item.mime_type === "audio/mpeg" ? ".mp3"
+    : item.mime_type === "audio/mp4" || item.mime_type === "audio/x-m4a" ? ".m4a" : null;
+  if (!ext) return "Only MP3 or AAC-in-M4A uploads are supported. For other formats, convert locally first.";
+  const max = 20 * 1024 * 1024;
+  if (typeof item.file_size === "number" && item.file_size > max) {
+    return "Telegram Bot API cannot download files above 20 MB. Use the Pi importer or local upload tooling.";
+  }
+
+  // getFile is a private Telegram API call. Never log the bot token or resulting URL.
+  const metaResponse = await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(item.file_id)}`,
+  );
+  if (!metaResponse.ok) return "Telegram getFile failed.";
+  const meta = await metaResponse.json() as {
+    ok?: boolean; result?: { file_path?: string; file_size?: number };
+  };
+  const filePath = meta.result?.file_path;
+  if (!meta.ok || !filePath || !/^[A-Za-z0-9._/-]+$/.test(filePath)
+    || (meta.result?.file_size ?? max + 1) > max) {
+    return "Telegram could not supply a supported file under 20 MB.";
+  }
+
+  const fileResponse = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${filePath}`);
+  if (!fileResponse.ok || !fileResponse.body) return "Telegram file download failed.";
+  const contentLength = Number(fileResponse.headers.get("content-length") ?? meta.result.file_size);
+  if (!Number.isSafeInteger(contentLength) || contentLength <= 0 || contentLength > max) {
+    await fileResponse.body.cancel();
+    return "Upload rejected: unknown or excessive size.";
+  }
+  const id = crypto.randomUUID();
+  const mime = ext === ".mp3" ? "audio/mpeg" : "audio/mp4";
+  const key = `telegram/${id}/audio${ext}`;
+  const stored = await env.AUDIO.put(key, fileResponse.body, {
+    httpMetadata: { contentType: mime },
+  });
+  if (!stored || stored.size <= 0) return "R2 upload failed.";
+
+  const duration = "duration" in item && typeof item.duration === "number" ? item.duration : null;
+  await env.DB.prepare(
+    `INSERT INTO episodes(id,title,description,r2_key,mime_type,byte_length,duration_seconds,published_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+  ).bind(id,title.slice(0,240),message.caption?.slice(0,1000) ?? "",
+    key,mime,stored.size,duration,new Date().toISOString()).run();
+  return `Published audio: ${title.slice(0,240)} (${(stored.size / 1048576).toFixed(2)} MB)`;
 }
