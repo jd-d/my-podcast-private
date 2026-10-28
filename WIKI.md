@@ -4,7 +4,7 @@ The canonical project documentation is in the repository. This index is the entr
 
 ## How it works
 
-**Telegram** is the owner-only admin UI. **Cloudflare Workers** validates the webhook, runs the private RSS gateway and agent API. **D1** stores recipients, episodes, job queue, token digests and usage. **R2** stores private audio. **Pi 3B+** runs yt-dlp/FFmpeg and uploads via R2 S3 API.
+**Telegram** is the owner-only admin UI, including direct MP3/M4A upload for small files. **Cloudflare Workers** validates the webhook, runs the private RSS gateway and agent API. **D1** stores recipients, episodes, job queue, token digests and usage. **R2** stores private audio. **Pi 3B+** runs yt-dlp/FFmpeg and uploads via R2 S3 API.
 
 ## Key concepts
 
