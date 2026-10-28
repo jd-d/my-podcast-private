@@ -40,7 +40,11 @@ rotating it invalidates existing token digests and pending replies.
 ## Validation
 
 Local checks include TypeScript, Markdown lint, Python syntax and a Wrangler
-deployment dry run. The suites contain 17 unit tests, 20 local Worker/D1/R2
+deployment dry run. Wrangler's local migration runner applied all six migrations.
+The initial Linux CI run caught a Windows lockfile missing TypeScript's Linux
+optional binary; the lock was regenerated from an empty directory, preserving
+the reviewed direct versions and including both platform binaries.
+The suites contain 17 unit tests, 20 local Worker/D1/R2
 integration tests, and 12 Pi behavioral tests. Integration fixtures use synthetic
 credentials/audio and mocked Telegram networking; no listener content is sent.
 

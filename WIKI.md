@@ -78,3 +78,10 @@ suite. Fixtures/builds are ignored under `tmp/`. Deployment, real Pi behavior,
 private-bucket/logging verification and listener acceptance remain separate.
 The original [readiness review](reviews/2026-10-28-readiness-review.md) records
 the before state; [Operations](docs/OPERATIONS.md) records recovery procedures.
+
+CI exposed a Windows lockfile missing TypeScript's Linux optional binary.
+Regenerate locks from an empty directory, with direct dependencies pinned to the
+reviewed versions; resolution against an existing platform-specific node_modules
+tree can omit other platforms. Verify Linux/Windows TypeScript and runtime entries
+before committing a regenerated lock. Wrangler's local migration runner also
+applied all six migrations successfully.
