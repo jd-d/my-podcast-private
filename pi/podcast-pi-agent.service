@@ -1,0 +1,25 @@
+[Unit]
+Description=Private podcast audio importer (yt-dlp + R2)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=podcast
+Group=podcast
+WorkingDirectory=/opt/my-podcast-private
+EnvironmentFile=/etc/my-podcast-private/pi-agent.env
+ExecStart=/opt/my-podcast-private/.venv/bin/python /opt/my-podcast-private/pi/worker.py
+Restart=always
+RestartSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/tmp
+MemoryMax=750M
+CPUQuota=90%
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
