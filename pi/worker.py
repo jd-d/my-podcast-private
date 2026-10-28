@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import subprocess
 import tempfile
 import threading
@@ -72,7 +73,7 @@ def execute(args: list[str], *, timeout: int) -> str:
 
 def prepare_audio(source_url: str, directory: Path, max_mb: int) -> tuple[Path, dict[str, Any]]:
     check_video_url(source_url)
-    yt_dlp = os.getenv("YTDLP_BINARY", "yt-dlp")
+    yt_dlp = os.getenv("YTDLP_BINARY", str(Path(sys.executable).with_name("yt-dlp")))
     args = [
         yt_dlp, "--ignore-config", "--no-playlist", "--no-progress",
         "--no-warnings", "--no-overwrites", "--write-info-json",
