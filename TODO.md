@@ -5,9 +5,9 @@
 ## P0 validation and deployment
 
 - [x] Fix runtime review findings F1-F6 with local regression coverage.
-- [ ] Commit verified fixes and confirm branch CI.
-- [ ] Apply migrations 0001 through 0006 and provision private R2;
-  existing deployment token needs R2 write permission.
+- [x] Commit verified fixes and confirm branch CI.
+- [x] Create project D1 and apply migrations 0001 through 0006 with the existing grant.
+- [ ] Provision private R2; existing deployment token needs R2 write permission.
 - [ ] Set secrets/vars, deploy Worker, register Telegram webhook.
 - [ ] Configure and start systemd service on Pi 3B+.
 - [ ] Prove YouTube/M4A passthrough and FFmpeg fallback.

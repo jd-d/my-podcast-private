@@ -67,6 +67,22 @@ Telegram may duplicate a reply after an ambiguous send, and its retry window is
 finite. Interrupted external uploads may leave orphan objects. No automatic
 destructive cleanup has been added.
 
+## Prepared infrastructure and local configuration
+
+At 2026-10-28T03:23:53Z, after
+[Linux CI passed](https://github.com/jd-d/my-podcast-private/actions/runs/40626148978),
+the existing D1 grant created `my-podcast-private-db` in the configured account.
+All six remote migrations were applied. Aggregate queries confirmed six
+migration rows and zero recipients, episodes or jobs. The binding ID is recorded
+in `wrangler.jsonc`; no Worker or public endpoint was deployed.
+
+Independent APP_HMAC_SECRET, PI_AGENT_TOKEN and TELEGRAM_WEBHOOK_SECRET values
+were generated in ignored local `.dev.vars`, with access restricted to the
+Windows owner and SYSTEM. No values were printed or committed, and no remote
+Worker secrets were set. Telegram token/owner and deployed origin placeholders
+remain for the later setup stage. The changes are in
+[draft PR 1](https://github.com/jd-d/my-podcast-private/pull/1).
+
 Cloudflare R2 write access, Pi S3 credentials, BotFather token, numeric owner ID,
 intended Pi access/current-workload inventory and a permitted YouTube URL remain
 setup inputs. Real deployment privacy/logging, backups/restores, Pi ARM/runtime/

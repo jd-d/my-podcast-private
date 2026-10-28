@@ -7,8 +7,8 @@ This is the canonical current handoff. Do not start by rewriting the architectur
 ## P0. Verify committed code first
 
 - [x] Run `npm ci`, `npm run typecheck`, `npm test`: local unit and Worker integration checks pass.
-- [ ] Commit verified changes and confirm the branch CI run.
-- [ ] Check GitHub Actions [CI](.github/workflows/ci.yml) status and fix failing jobs.
+- [x] Commit verified changes and confirm the branch CI run.
+- [x] Check GitHub Actions [CI](.github/workflows/ci.yml) and fix the Linux lockfile failure.
 - [x] Validate Python syntax and run the Pi behavioral suite locally.
 - [x] Add local D1/R2 tests for webhook security, lease fencing, publication, RSS, revoked tokens,
       Range headers, quotas, direct uploads and replay.
@@ -19,15 +19,14 @@ This is the canonical current handoff. Do not start by rewriting the architectur
 
 ## P0. Cloudflare (using existing local credentials)
 
-- [ ] Identify correct Cloudflare account; do not copy credentials into Git.
-- [ ] Create D1 database `my-podcast-private-db`, unless already present; update placeholder UUID in
-      `wrangler.jsonc`.
+- [x] Verify the existing configured Cloudflare account without copying credentials into Git.
+- [x] Create D1 database `my-podcast-private-db` and record its UUID in `wrangler.jsonc`.
 - [ ] Create private R2 bucket `my-podcast-private-audio`, unless already present. Disable any
       public `r2.dev` or custom-domain access.
-- [ ] Apply all six D1 migrations (0001 through 0006).
-- [ ] Generate **independent** strong random values for `APP_HMAC_SECRET`, `PI_AGENT_TOKEN`,
-      `TELEGRAM_WEBHOOK_SECRET`; put into local `.dev.vars` and remote Wrangler Secrets. Never
-      commit them.
+- [x] Apply all six D1 migrations; verify zero recipients, episodes and jobs.
+- [x] Generate independent APP_HMAC_SECRET, PI_AGENT_TOKEN and TELEGRAM_WEBHOOK_SECRET
+  values in ignored, access-restricted local `.dev.vars`.
+- [ ] Set application secrets remotely when deploying the Worker; never commit their values.
 - [ ] Configure `PUBLIC_BASE_URL` to the actual HTTPS Worker origin; set `PODCAST_TITLE`,
       `PODCAST_DESCRIPTION`, etc., as desired.
 - [ ] Deploy Worker, then confirm `/robots.txt` responds and unknown tokens 404.

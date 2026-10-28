@@ -85,3 +85,18 @@ reviewed versions; resolution against an existing platform-specific node_modules
 tree can omit other platforms. Verify Linux/Windows TypeScript and runtime entries
 before committing a regenerated lock. Wrangler's local migration runner also
 applied all six migrations successfully.
+
+## Cloudflare preparation
+
+At 2026-10-28T03:23:53Z, after the corrected branch CI passed, the existing D1
+grant created `my-podcast-private-db` in the configured account. Wrangler applied
+all six remote migrations; aggregate verification found six migration records
+and zero recipients, episodes or jobs. The database binding ID is in
+`wrangler.jsonc`. No Worker, R2 bucket, webhook or Pi service was deployed.
+
+Three independent application secrets were prepared in ignored local
+configuration with Windows access restricted to the owner and SYSTEM. Their
+values were not printed or committed. Remote secrets, Telegram inputs and the
+deployed origin remain unset. See the
+[execution record](reviews/2026-10-28-runtime-hardening.md) and
+[draft PR](https://github.com/jd-d/my-podcast-private/pull/1).
