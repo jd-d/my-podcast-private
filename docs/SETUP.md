@@ -1,129 +1,85 @@
-# Cloudflare setup
+# Cloudflare setup for final Telegram + Pi design
 
-The project uses a Worker, D1 and R2.
+**Read [PRIMARY_TODO](../PRIMARY_TODO.md) before deploying.** This file supersedes the initial RSS-only setup description.
 
-Current Cloudflare documentation recommends Wrangler configuration in `wrangler.jsonc`. D1 migrations live in `migrations/`, and the Worker accesses R2 through a binding.
+Use existing Cloudflare authentication on the local dev machine.
 
-## 1. Install
+## Provision Cloudflare
 
 ```bash
 npm install
-npm run typecheck
-npm test
-```
-
-## 2. Create D1
-
-```bash
+npm run typecheck && npm test
+npx wrangler whoami
 npx wrangler d1 create my-podcast-private-db
-```
-
-Copy the returned database UUID into the `database_id` field in `wrangler.jsonc`.
-
-If you want EU jurisdiction/storage constraints, decide that **before** creating production resources and use the current supported Wrangler flags.
-
-## 3. Create R2
-
-```bash
 npx wrangler r2 bucket create my-podcast-private-audio
 ```
 
-Keep the bucket private. Do not enable public `r2.dev` access.
+If a resource already exists, reuse it. Replace `REPLACE_AFTER_D1_CREATE` in `wrangler.jsonc` with the returned D1 UUID and keep the R2 bucket name accurate. Verify the R2 bucket has **no public `r2.dev` hostname or custom domain**.
 
-## 4. Create the HMAC secret
+```bash
+npm run db:migrate:local
+npm run db:migrate:remote
+```
 
-Generate:
+Both migrations `0001_initial.sql` and `0002_import_jobs.sql` are required.
+
+## Create independent Worker secrets
+
+Generate each with a cryptographically secure RNG:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
 
-For local development, copy `.dev.vars.example` to `.dev.vars` and place the value there.
-
-For production:
+Never reuse a generated value across purposes. Set these secrets with Wrangler:
 
 ```bash
 npx wrangler secret put APP_HMAC_SECRET
+npx wrangler secret put PI_AGENT_TOKEN
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 ```
 
-The local and production values must match if you expect recipient digests created locally to work against production D1.
+`TELEGRAM_OWNER_USER_ID` and `PUBLIC_BASE_URL` can be standard Worker variables, but they need correct values. Populate `wrangler.jsonc` vars or use secret bindings for them. All must be available at runtime.
 
-## 5. Migrate D1
+Keep a local `.dev.vars` copied from `.dev.vars.example` for local testing and the `npm run telegram:webhook` script. Do **not** commit the real file. `APP_HMAC_SECRET` must match between a local token-generation script and the deployed Worker if you are using that local script.
 
-Local:
-
-```bash
-npm run db:migrate:local
-```
-
-Remote:
-
-```bash
-npm run db:migrate:remote
-```
-
-## 6. Generate a recipient
-
-```bash
-npm run recipient:token -- "Friend alias"
-```
-
-The script prints:
-
-- the alias;
-- a newly generated 256-bit bearer token;
-- the SQL command needed to insert its digest;
-- the feed URL shape.
-
-The service intentionally cannot recover the plaintext token from D1.
-
-## 7. Add a test episode
-
-Until the episode CLI is implemented, upload with Wrangler and insert metadata manually.
-
-Example:
-
-```bash
-npx wrangler r2 object put my-podcast-private-audio/episodes/test.mp3 --file ./test.mp3 --content-type audio/mpeg
-```
-
-Determine the exact file byte length locally, then insert an episode:
-
-```sql
-INSERT INTO episodes (
-  id, title, description, r2_key, mime_type, byte_length, duration_seconds, published_at
-) VALUES (
-  'test-001',
-  'Test audio',
-  'First private test',
-  'episodes/test.mp3',
-  'audio/mpeg',
-  1234567,
-  NULL,
-  '2026-10-07T12:00:00Z'
-);
-```
-
-Execute it with Wrangler D1 against the intended database.
-
-## 8. Run locally
-
-```bash
-npm run dev
-```
-
-Test the feed URL generated for the recipient.
-
-## 9. Deploy
+## Deploy
 
 ```bash
 npm run deploy
 ```
 
-Then subscribe using the exact private feed URL in Apple Podcasts and Overcast.
+Set `PUBLIC_BASE_URL` to the final Worker origin. You can use `*.workers.dev` at first. Do not confuse this with the R2 bucket endpoint.
 
-## 10. Custom domain
+Register Telegram:
 
-A custom hostname can be added later. It is not required for the security model.
+```bash
+npm run telegram:webhook
+```
 
-If changing hostnames after recipients have subscribed, verify how each podcast client handles enclosure URLs and feed relocation before removing the old hostname.
+Follow [Telegram instructions](TELEGRAM.md).
+
+## Pi authentication and R2
+
+Use the same `PI_AGENT_TOKEN` value in the Pi's root-owned env file. Create *separate* R2 API S3 credentials scoped to this private bucket for the Pi. **Do not** give the Pi the full account Cloudflare API token.
+
+Follow [Pi instructions](PI_SETUP.md).
+
+## Smoke test
+
+1. Request `/robots.txt` from the Worker.
+2. Unknown private feed URL returns 404.
+3. The bot responds to owner `/help`.
+4. `/add Test Friend` returns a unique RSS URL in the owner's private bot chat.
+5. Non-owner Telegram messages cannot create recipients.
+6. `/import <YouTube URL>` queues a job.
+7. Start Pi agent; observe job claim, download, R2 upload and publish notification.
+8. Subscribe to the feed in Apple Podcasts or Overcast.
+9. Validate playback, seek, download cap, rotation, revocation and privacy.
+
+## Deployment safety
+
+Current source implementation still has P0 race/behavior checks described in [PRIMARY_TODO](../PRIMARY_TODO.md). Do not publish sensitive audio before those tests are complete.
+
+Avoid enabling Worker observability that stores feed URL paths, because the path includes a bearer secret.
