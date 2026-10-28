@@ -9,6 +9,10 @@ User=podcast
 Group=podcast
 WorkingDirectory=/opt/my-podcast-private
 EnvironmentFile=/etc/my-podcast-private/pi-agent.env
+Environment=HOME=/tmp
+Environment=XDG_CACHE_HOME=/tmp/my-podcast-cache
+Environment=DENO_DIR=/tmp/my-podcast-deno
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/my-podcast-private/.venv/bin/python /opt/my-podcast-private/pi/worker.py
 Restart=always
 RestartSec=20
