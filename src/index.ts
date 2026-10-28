@@ -253,8 +253,12 @@ async function serveAudio(
   let status = 200;
   if (rangeHeader && object.range) {
     status = 206;
-    const offset = object.range.offset ?? 0;
-    const length = object.range.length ?? episode.byte_length;
+    const offset = "suffix" in object.range
+      ? Math.max(0, episode.byte_length - Number(object.range.suffix))
+      : ("offset" in object.range ? Number(object.range.offset) : 0);
+    const length = "suffix" in object.range
+      ? Math.min(episode.byte_length, Number(object.range.suffix))
+      : ("length" in object.range ? Number(object.range.length) : episode.byte_length - offset);
     const end = Math.min(offset + length - 1, episode.byte_length - 1);
     headers.set("Content-Range", `bytes ${offset}-${end}/${episode.byte_length}`);
     headers.set("Content-Length", String(Math.max(0, end - offset + 1)));
