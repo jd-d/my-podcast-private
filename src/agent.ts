@@ -109,22 +109,34 @@ export async function agentApi(request: Request, env: AppEnv): Promise<Response>
     Number.isFinite(payload.duration_seconds) && payload.duration_seconds >= 0
     ? Math.round(payload.duration_seconds) : null;
 
-  // D1.batch() is transactional: metadata and job completion commit together.
+  // All 3 steps are one D1 transaction. The conditional transition MUST win
+  // before an episode can be inserted; the FK is linked only after insertion.
+  let transitioned: number;
   try {
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO episodes
-         (id,title,description,r2_key,mime_type,byte_length,duration_seconds,published_at)
-         VALUES (?,?,?,?,?,?,?,?)`,
-      ).bind(id,title,desc,key,mime,object.size,seconds,new Date().toISOString()),
+    const results = await env.DB.batch([
       env.DB.prepare(
         `UPDATE import_jobs
-         SET status='completed',episode_id=?,lease_digest=NULL,lease_expires_at=NULL,
-             updated_at=datetime('now'),completed_at=datetime('now')
+         SET status='completed',completed_at=datetime('now'),updated_at=datetime('now')
          WHERE id=? AND status='processing' AND lease_digest=?
-           AND lease_expires_at > datetime('now')`,
+           AND lease_expires_at > datetime('now')
+         RETURNING id`,
+      ).bind(id,digest),
+      env.DB.prepare(
+        `INSERT INTO episodes
+           (id,title,description,r2_key,mime_type,byte_length,duration_seconds,published_at)
+         SELECT ?,?,?,?,?,?,?,?
+         FROM import_jobs WHERE id=? AND status='completed' AND lease_digest=?`,
+      ).bind(id,title,desc,key,mime,object.size,seconds,new Date().toISOString(),id,digest),
+      env.DB.prepare(
+        `UPDATE import_jobs SET episode_id=?,lease_digest=NULL,lease_expires_at=NULL
+         WHERE id=? AND status='completed' AND lease_digest=?`,
       ).bind(id,id,digest),
     ]);
+    transitioned = results[0].results.length;
+    if (transitioned !== 1 || (results[1].meta.changes ?? 0) !== 1
+        || (results[2].meta.changes ?? 0) !== 1) {
+      return json({ error: "Job no longer owns a valid lease" }, 409);
+    }
   } catch {
     return json({ error: "Could not publish episode" }, 409);
   }
