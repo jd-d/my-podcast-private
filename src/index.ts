@@ -1,3 +1,6 @@
+import { telegramWebhook } from "./telegram";
+import { agentApi } from "./agent";
+import type { AppEnv } from "./security";
 import {
   escapeXml,
   formatRssDate,
@@ -8,16 +11,7 @@ import {
   sessionBucket,
 } from "./lib";
 
-interface Env {
-  DB: D1Database;
-  AUDIO: R2Bucket;
-  APP_HMAC_SECRET: string;
-  PODCAST_TITLE?: string;
-  PODCAST_DESCRIPTION?: string;
-  PODCAST_AUTHOR?: string;
-  PODCAST_IMAGE_URL?: string;
-  DOWNLOAD_SESSION_MINUTES?: string;
-}
+interface Env extends AppEnv {}
 
 interface Recipient {
   id: number;
@@ -48,11 +42,18 @@ const SECURITY_HEADERS: Record<string, string> = {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
+      const url = new URL(request.url);
+      // Keep administrative APIs separate from public podcast routes.
+      if (url.pathname === "/telegram") {
+        return telegramWebhook(request, env);
+      }
+      if (url.pathname.startsWith("/agent/")) {
+        return agentApi(request, env);
+      }
+
       if (request.method !== "GET" && request.method !== "HEAD") {
         return response("Method Not Allowed", 405, { Allow: "GET, HEAD" });
       }
-
-      const url = new URL(request.url);
 
       if (url.pathname === "/robots.txt") {
         return response("User-agent: *\nDisallow: /\n", 200, {
@@ -103,9 +104,10 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     // Download-session rows only exist to collapse Range retries into one
     // logical download. Retain a small window and discard stale rows.
-    await env.DB.prepare(
-      "DELETE FROM download_sessions WHERE created_at < datetime('now', '-14 days')",
-    ).run();
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM download_sessions WHERE created_at < datetime('now', '-14 days')"),
+      env.DB.prepare("DELETE FROM telegram_updates WHERE processed_at < datetime('now', '-30 days')"),
+    ]);
   },
 } satisfies ExportedHandler<Env>;
 
