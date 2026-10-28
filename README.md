@@ -64,7 +64,7 @@ Admin commands only work from your configured numeric Telegram user ID **in a pr
 - Unique 32-byte random recipient tokens and HMAC-only storage.
 - Alias private in D1; never in public feed links.
 - Default **5 logical download sessions per episode per recipient**, not five raw HTTP Range requests.
-- No identity verification for recipients: a bearer URL can be forwarded. Cap is abuse mitigation, not DRM.
+- No identity verification for recipients: a bearer URL can be forwarded. Cap is abuse mitigation, not DRM. A charged-session marker reduces concurrent uncounted Range bypasses, but real-client testing is mandatory.
 - Podcast clients, platforms and intermediaries may receive private feed URL information during normal use.
 - Use only recordings you have permission to download and share.
 
