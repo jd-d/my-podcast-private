@@ -45,6 +45,12 @@ This calls Telegram's `setWebhook` with secret header authentication and request
 - The bot token and webhook secret never appear in Git or Worker URL paths.
 - Telegram bot chats are **not** end-to-end encrypted; recipient RSS links in bot messages are sensitive bearer credentials.
 
+## Direct audio uploads
+
+Send an MP3 or M4A file under Telegram's 20 MB bot download limit to the owner's private bot chat. The Worker streams it into private R2 and publishes an episode without invoking the Pi. The audio title or filename becomes the episode title; a caption becomes its description.
+
+For large or unsupported files use the Pi or an owner-side local upload tool.
+
 ## Commands
 
 See [README](../README.md). Initially prefer one owner only. Additional admin users would need a deliberate security redesign and proper audit behavior.
