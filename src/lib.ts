@@ -7,6 +7,7 @@ export function isValidBearerToken(token: string): boolean {
 
 export function escapeXml(value: string): string {
   return value
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g, "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -18,10 +19,6 @@ export function parsePositiveInt(value: string | undefined, fallback: number): n
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-export function sessionBucket(nowMs: number, windowMinutes: number): number {
-  return Math.floor(nowMs / (windowMinutes * 60_000));
 }
 
 export function formatRssDate(isoDate: string): string {

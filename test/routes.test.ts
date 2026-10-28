@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import type { AppEnv } from "../src/security";
 
@@ -13,6 +13,19 @@ const fakeEnv = {
 } satisfies AppEnv;
 
 describe("public route isolation", () => {
+  it("catches asynchronous backend failures without logging their sensitive exception text", async () => {
+    const logger = vi.spyOn(console,"error").mockImplementation(()=>{});
+    let queries = 0;
+    const env = { ...fakeEnv, DB: {prepare() {
+      if (++queries === 1) return {bind:()=>({first:async()=>({id:1})})};
+      throw new Error("synthetic-private-url-must-not-be-logged");
+    }} as unknown as D1Database };
+    try {
+      const response = await worker.fetch(new Request(`https://example.test/f/${"A".repeat(43)}/audio/test`),env);
+      expect(response.status).toBe(500);
+      expect(logger).toHaveBeenCalledExactlyOnceWith("request_failed");
+    } finally { logger.mockRestore(); }
+  });
   it("never allows unknown paths or malformed feed tokens", async () => {
     const notFound = await worker.fetch(new Request("https://example.test/"), fakeEnv);
     expect(notFound.status).toBe(404);

@@ -19,3 +19,7 @@ Thumbs.db
 secrets/
 private/
 tmp/
+artifacts/
+.venv/
+__pycache__/
+*.pyc

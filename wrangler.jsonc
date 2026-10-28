@@ -17,7 +17,7 @@
     {
       "binding": "DB",
       "database_name": "my-podcast-private-db",
-      "database_id": "REPLACE_AFTER_D1_CREATE",
+      "database_id": "4126e7fe-58fa-4a76-b1c2-f53add319459",
       "migrations_dir": "migrations"
     }
   ],

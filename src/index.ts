@@ -1,3 +1,4 @@
+import { parseByteRange } from "./http";
 import { telegramWebhook } from "./telegram";
 import { agentApi } from "./agent";
 import type { AppEnv } from "./security";
@@ -8,7 +9,6 @@ import {
   parsePositiveInt,
   safeEpisodeId,
   secondsToItunesDuration,
-  sessionBucket,
 } from "./lib";
 
 interface Env extends AppEnv {}
@@ -45,10 +45,10 @@ export default {
       const url = new URL(request.url);
       // Keep administrative APIs separate from public podcast routes.
       if (url.pathname === "/telegram") {
-        return telegramWebhook(request, env);
+        return await telegramWebhook(request, env);
       }
       if (url.pathname.startsWith("/agent/")) {
-        return agentApi(request, env);
+        return await agentApi(request, env);
       }
 
       if (request.method !== "GET" && request.method !== "HEAD") {
@@ -83,7 +83,7 @@ export default {
           return response("", 200, { "Content-Type": "application/rss+xml; charset=utf-8" });
         }
         await recordActivity(env.DB, recipient.id, "feed", clientDigest);
-        return serveFeed(request, env, recipient, token);
+        return await serveFeed(request, env, recipient, token);
       }
 
       if (parts.length === 4 && parts[2] === "audio") {
@@ -91,12 +91,13 @@ export default {
         if (!safeEpisodeId(episodeId)) {
           return response("Not Found", 404);
         }
-        return serveAudio(request, env, recipient, episodeId, clientDigest);
+        return await serveAudio(request, env, recipient, episodeId, clientDigest);
       }
 
       return response("Not Found", 404);
-    } catch (error) {
-      console.error("Unhandled request error", error);
+    } catch {
+      // Exception text and stacks may contain bearer URLs or upstream secrets.
+      console.error("request_failed");
       return response("Internal Server Error", 500);
     }
   },
@@ -105,7 +106,7 @@ export default {
     // Download-session rows only exist to collapse Range retries into one
     // logical download. Retain a small window and discard stale rows.
     await env.DB.batch([
-      env.DB.prepare("DELETE FROM download_sessions WHERE created_at < datetime('now', '-14 days')"),
+      env.DB.prepare("DELETE FROM download_sessions WHERE expires_at <= unixepoch()"),
       env.DB.prepare("DELETE FROM telegram_updates WHERE processed_at < datetime('now', '-30 days')"),
     ]);
   },
@@ -205,68 +206,56 @@ async function serveAudio(
     return response("Not Found", 404);
   }
 
+  const head = await env.AUDIO.head(episode.r2_key);
+  if (!head) return response("Not Found", 404);
   if (request.method === "HEAD") {
-    const head = await env.AUDIO.head(episode.r2_key);
-    if (!head) return response("Not Found", 404);
-
     await recordActivity(env.DB, recipient.id, "audio", clientDigest);
-    return response("", 200, {
+    return response(null, 200, {
       "Content-Type": episode.mime_type,
-      "Content-Length": String(episode.byte_length),
+      "Content-Length": String(head.size),
       "Accept-Ranges": "bytes",
       ETag: head.httpEtag,
     });
   }
 
-  const decision = await registerDownloadSession(
-    env.DB,
-    recipient,
-    episode.id,
-    clientDigest,
-    parsePositiveInt(env.DOWNLOAD_SESSION_MINUTES, 30),
-  );
-
-  if (!decision.allowed) {
-    return response("Download limit reached", 429, {
-      "Retry-After": "86400",
-    });
+  const requestedRange = request.headers.get("Range");
+  const ifRange = request.headers.get("If-Range");
+  // Only a matching strong ETag validates If-Range; dates/weak tags fall back
+  // to a full response. Never assemble Content-Range from optional R2 getters.
+  const useRange = requestedRange && (!ifRange || ifRange === head.httpEtag);
+  const range = useRange ? parseByteRange(requestedRange, head.size) : undefined;
+  if (range === null) {
+    return response("Range Not Satisfiable", 416, { "Content-Range": `bytes */${head.size}` });
   }
+  const object = await env.AUDIO.get(episode.r2_key, {
+    ...(range ? { range } : {}),
+    onlyIf: { etagMatches: head.etag },
+  });
+  if (!object) return response("Not Found", 404);
+  if (!("body" in object)) return response("Object changed; retry", 503);
 
-  await recordActivity(env.DB, recipient.id, "audio", clientDigest);
-
-  const rangeHeader = request.headers.get("Range");
-  const object = await env.AUDIO.get(
-    episode.r2_key,
-    rangeHeader ? { range: request.headers } : undefined,
-  );
-
-  if (!object) {
-    return response("Not Found", 404);
+  try {
+    await recordActivity(env.DB, recipient.id, "audio", clientDigest);
+    const allowed = await registerDownloadSession(
+      env.DB, recipient, episode.id, clientDigest,
+      Math.min(parsePositiveInt(env.DOWNLOAD_SESSION_MINUTES, 30), 1440),
+    );
+    if (!allowed) {
+      await object.body.cancel();
+      return response("Download limit reached", 429);
+    }
+  } catch (error) {
+    await object.body.cancel();
+    throw error;
   }
 
   const headers = new Headers(SECURITY_HEADERS);
-  object.writeHttpMetadata(headers);
   headers.set("Content-Type", episode.mime_type);
   headers.set("Accept-Ranges", "bytes");
   headers.set("ETag", object.httpEtag);
-
-  let status = 200;
-  if (rangeHeader && object.range) {
-    status = 206;
-    const offset = "suffix" in object.range
-      ? Math.max(0, episode.byte_length - Number(object.range.suffix))
-      : ("offset" in object.range ? Number(object.range.offset) : 0);
-    const length = "suffix" in object.range
-      ? Math.min(episode.byte_length, Number(object.range.suffix))
-      : ("length" in object.range ? Number(object.range.length) : episode.byte_length - offset);
-    const end = Math.min(offset + length - 1, episode.byte_length - 1);
-    headers.set("Content-Range", `bytes ${offset}-${end}/${episode.byte_length}`);
-    headers.set("Content-Length", String(Math.max(0, end - offset + 1)));
-  } else {
-    headers.set("Content-Length", String(episode.byte_length));
-  }
-
-  return new Response(object.body, { status, headers });
+  headers.set("Content-Length", String(range ? range.length : object.size));
+  if (range) headers.set("Content-Range", `bytes ${range.offset}-${range.offset + range.length - 1}/${object.size}`);
+  return new Response(object.body, { status: range ? 206 : 200, headers });
 }
 
 async function registerDownloadSession(
@@ -275,81 +264,39 @@ async function registerDownloadSession(
   episodeId: string,
   clientDigest: string,
   windowMinutes: number,
-): Promise<{ allowed: boolean; counted: boolean; count?: number }> {
-  const bucket = sessionBucket(Date.now(), windowMinutes);
+): Promise<boolean> {
+  const sessionId = crypto.randomUUID();
+  const globalScope = recipient.download_scope === "recipient";
+  // Table/column names are fixed application choices, never request input.
+  const table = globalScope ? "recipient_usage" : "recipient_episode_usage";
+  const usageKey = globalScope ? "recipient_id=?" : "recipient_id=? AND episode_id=?";
+  const usageValues = globalScope ? [recipient.id] : [recipient.id, episodeId];
+  const columns = globalScope ? "recipient_id" : "recipient_id,episode_id";
+  const placeholders = globalScope ? "?" : "?,?";
+  const sessionKey = "recipient_id=? AND episode_id=? AND client_digest=?";
+  const key = [recipient.id, episodeId, clientDigest];
 
-  const inserted = await db.prepare(
-    `INSERT OR IGNORE INTO download_sessions
-       (recipient_id, episode_id, client_digest, session_bucket, counted)
-     VALUES (?, ?, ?, ?, 0)`,
-  )
-    .bind(recipient.id, episodeId, clientDigest, bucket)
-    .run();
-
-  if ((inserted.meta.changes ?? 0) === 0) {
-    // Another request may have inserted the marker but not yet charged the
-    // quota. Do not allow that request to bypass the limit during the race.
-    const existing = await db.prepare(
-      `SELECT counted FROM download_sessions
-       WHERE recipient_id=? AND episode_id=? AND client_digest=? AND session_bucket=?`,
-    ).bind(recipient.id, episodeId, clientDigest, bucket).first<{ counted: number }>();
-    return { allowed: existing?.counted === 1, counted: false };
-  }
-
-  let updated: { download_count: number } | null;
-
-  if (recipient.download_scope === "recipient") {
-    await db.prepare(
-      "INSERT OR IGNORE INTO recipient_usage (recipient_id, download_count) VALUES (?, 0)",
-    )
-      .bind(recipient.id)
-      .run();
-
-    updated = await db.prepare(
-      `UPDATE recipient_usage
-       SET download_count = download_count + 1
-       WHERE recipient_id = ? AND download_count < ?
-       RETURNING download_count`,
-    )
-      .bind(recipient.id, recipient.download_limit)
-      .first<{ download_count: number }>();
-  } else {
-    await db.prepare(
-      `INSERT OR IGNORE INTO recipient_episode_usage
-         (recipient_id, episode_id, download_count)
-       VALUES (?, ?, 0)`,
-    )
-      .bind(recipient.id, episodeId)
-      .run();
-
-    updated = await db.prepare(
-      `UPDATE recipient_episode_usage
-       SET download_count = download_count + 1
-       WHERE recipient_id = ? AND episode_id = ? AND download_count < ?
-       RETURNING download_count`,
-    )
-      .bind(recipient.id, episodeId, recipient.download_limit)
-      .first<{ download_count: number }>();
-  }
-
-  if (!updated) {
-    // Undo the dedupe marker so a later request still receives a clear denial.
-    await db.prepare(
-      `DELETE FROM download_sessions
-       WHERE recipient_id = ? AND episode_id = ? AND client_digest = ? AND session_bucket = ?`,
-    )
-      .bind(recipient.id, episodeId, clientDigest, bucket)
-      .run();
-
-    return { allowed: false, counted: false };
-  }
-
-  await db.prepare(
-    `UPDATE download_sessions SET counted=1
-     WHERE recipient_id=? AND episode_id=? AND client_digest=? AND session_bucket=?`,
-  ).bind(recipient.id, episodeId, clientDigest, bucket).run();
-
-  return { allowed: true, counted: true, count: updated.download_count };
+  // A single D1 batch is transactional. An attempt UUID identifies the one
+  // insert that charges the counter; concurrent retries see its committed row.
+  const results = await db.batch([
+    db.prepare(`INSERT OR IGNORE INTO ${table} (${columns},download_count) VALUES (${placeholders},0)`).bind(...usageValues),
+    db.prepare(`DELETE FROM download_sessions WHERE ${sessionKey} AND expires_at <= unixepoch()`).bind(...key),
+    db.prepare(`INSERT OR IGNORE INTO download_sessions
+      (recipient_id,episode_id,client_digest,session_id,expires_at)
+      SELECT ?,?,?,?,unixepoch()+? FROM ${table}
+      WHERE ${usageKey} AND download_count < ?`)
+      .bind(...key, sessionId, windowMinutes * 60, ...usageValues, recipient.download_limit),
+    db.prepare(`UPDATE ${table} SET download_count=download_count+1
+      WHERE ${usageKey} AND EXISTS (
+        SELECT 1 FROM download_sessions WHERE ${sessionKey} AND session_id=?)`)
+      .bind(...usageValues, ...key, sessionId),
+    db.prepare(`UPDATE download_sessions SET expires_at=unixepoch()+?
+      WHERE ${sessionKey} AND expires_at > unixepoch()`)
+      .bind(windowMinutes * 60, ...key),
+    db.prepare(`SELECT session_id FROM download_sessions
+      WHERE ${sessionKey} AND expires_at > unixepoch()`).bind(...key),
+  ]);
+  return results[5].results.length === 1;
 }
 
 async function recordActivity(

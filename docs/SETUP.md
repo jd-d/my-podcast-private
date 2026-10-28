@@ -1,27 +1,41 @@
 # Cloudflare setup for final Telegram + Pi design
 
-**Read [PRIMARY_TODO](../PRIMARY_TODO.md) before deploying.** This file supersedes the initial RSS-only setup description.
+**Read [PRIMARY_TODO](../PRIMARY_TODO.md) before deploying.** This file supersedes the initial
+RSS-only setup description.
 
 Use existing Cloudflare authentication on the local dev machine.
+
+The readiness review found Workers Scripts Write and D1 Write already granted,
+but Workers R2 Storage Write is missing. Add that permission for the intended
+account, or create the bucket manually and verify its privacy. The Pi needs
+separate bucket-scoped S3 Object Read & Write credentials; do not give it the
+deployment token. No custom-domain DNS permission is needed for workers.dev.
 
 ## Provision Cloudflare
 
 ```bash
-npm install
+npm ci
 npm run typecheck && npm test
 npx wrangler whoami
 npx wrangler d1 create my-podcast-private-db
 npx wrangler r2 bucket create my-podcast-private-audio
 ```
 
-If a resource already exists, reuse it. Replace `REPLACE_AFTER_D1_CREATE` in `wrangler.jsonc` with the returned D1 UUID and keep the R2 bucket name accurate. Verify the R2 bucket has **no public `r2.dev` hostname or custom domain**.
+If a resource already exists, reuse it. Replace `REPLACE_AFTER_D1_CREATE` in `wrangler.jsonc` with
+the returned D1 UUID and keep the R2 bucket name accurate. Verify the R2 bucket has **no public
+`r2.dev` hostname or custom domain**.
 
 ```bash
 npm run db:migrate:local
 npm run db:migrate:remote
 ```
 
-All three migrations `0001_initial.sql`, `0002_import_jobs.sql` and `0003_session_accounting.sql` are required.
+All six numbered migrations are required. Migrations 0004-0006 add transactional
+sliding sessions, per-attempt upload paths and the encrypted Telegram reply outbox.
+
+For an existing installation, stop the Pi and pause incoming traffic before migrating.
+Update Worker and Pi together; old Pi versions cannot complete jobs using the new
+upload-path protocol. Take a private D1 export first; see [Operations](OPERATIONS.md).
 
 ## Create independent Worker secrets
 
@@ -40,9 +54,13 @@ npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 ```
 
-`TELEGRAM_OWNER_USER_ID` and `PUBLIC_BASE_URL` can be standard Worker variables, but they need correct values. Populate `wrangler.jsonc` vars or use secret bindings for them. All must be available at runtime.
+`TELEGRAM_OWNER_USER_ID` and `PUBLIC_BASE_URL` can be standard Worker variables, but they need
+correct values. Populate `wrangler.jsonc` vars or use secret bindings for them. All must be
+available at runtime.
 
-Keep a local `.dev.vars` copied from `.dev.vars.example` for local testing and the `npm run telegram:webhook` script. Do **not** commit the real file. `APP_HMAC_SECRET` must match between a local token-generation script and the deployed Worker if you are using that local script.
+Keep a local `.dev.vars` copied from `.dev.vars.example` for local testing and the `npm run
+telegram:webhook` script. Do **not** commit the real file. `APP_HMAC_SECRET` must match between a
+local token-generation script and the deployed Worker if you are using that local script.
 
 ## Deploy
 
@@ -50,7 +68,8 @@ Keep a local `.dev.vars` copied from `.dev.vars.example` for local testing and t
 npm run deploy
 ```
 
-Set `PUBLIC_BASE_URL` to the final Worker origin. You can use `*.workers.dev` at first. Do not confuse this with the R2 bucket endpoint.
+Set `PUBLIC_BASE_URL` to the final Worker origin. You can use `*.workers.dev` at first. Do not
+confuse this with the R2 bucket endpoint.
 
 Register Telegram:
 
@@ -62,7 +81,9 @@ Follow [Telegram instructions](TELEGRAM.md).
 
 ## Pi authentication and R2
 
-Use the same `PI_AGENT_TOKEN` value in the Pi's root-owned env file. Create *separate* R2 API S3 credentials scoped to this private bucket for the Pi. **Do not** give the Pi the full account Cloudflare API token.
+Use the same `PI_AGENT_TOKEN` value in the Pi's root-owned env file. Create *separate* R2 API S3
+credentials scoped to this private bucket for the Pi. **Do not** give the Pi the full account
+Cloudflare API token.
 
 Follow [Pi instructions](PI_SETUP.md).
 
@@ -80,6 +101,9 @@ Follow [Pi instructions](PI_SETUP.md).
 
 ## Deployment safety
 
-Current source implementation still has P0 race/behavior checks described in [PRIMARY_TODO](../PRIMARY_TODO.md). Do not publish sensitive audio before those tests are complete.
+Local D1/R2 and Pi regression tests cover the hardening changes. Real deployment,
+outage and podcast-client acceptance remain in [PRIMARY_TODO](../PRIMARY_TODO.md). Do not publish
+sensitive audio before those tests are complete.
 
-Avoid enabling Worker observability that stores feed URL paths, because the path includes a bearer secret.
+Avoid enabling Worker observability that stores feed URL paths, because the path includes a bearer
+secret.

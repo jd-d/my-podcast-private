@@ -13,6 +13,7 @@ Environment=HOME=/tmp
 Environment=XDG_CACHE_HOME=/tmp/my-podcast-cache
 Environment=DENO_DIR=/tmp/my-podcast-deno
 Environment=PYTHONDONTWRITEBYTECODE=1
+StateDirectory=my-podcast-private
 ExecStart=/opt/my-podcast-private/.venv/bin/python /opt/my-podcast-private/pi/worker.py
 Restart=always
 RestartSec=20
@@ -20,7 +21,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/tmp
+ReadWritePaths=/tmp /var/lib/my-podcast-private
 MemoryMax=750M
 CPUQuota=90%
 UMask=0077
