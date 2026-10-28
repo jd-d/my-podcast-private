@@ -1,82 +1,49 @@
-# Security
+# Security model and open risks
 
-## Threat model
+## Current model
 
-Primary threat: an unlisted feed URL leaks and is then fetched by people other than the intended recipient.
+Each recipient gets an independent 256-bit random bearer token. The public URL contains no alias and is not discoverable by sequential enumeration. HMAC-SHA-256 stores a digest of the token in D1. The private R2 bucket is accessed only via the authorized Worker for playback; the Pi has separate bucket-scoped write access for imports.
 
-The service reduces that risk through:
+Telegram administration requires both an authenticated webhook secret and matching numeric owner user/chat ID, in a private chat. The Pi API uses an independent `PI_AGENT_TOKEN`, short-lived random job leases, and R2 object validation before publication.
 
-- one independent random token per recipient;
-- 256 bits of token entropy;
-- no recipient identity in the URL;
-- HMAC-only token storage;
-- per-recipient revocation/rotation;
-- download/session caps;
-- private R2 storage;
-- no public browse/index endpoint;
-- noindex headers and private-feed RSS metadata.
+No public admin dashboard or inbound Pi port is required.
 
-## What the design does guarantee
+## Boundaries
 
-Assuming the random token is generated correctly and kept secret, guessing a valid token by brute force is computationally infeasible.
+A bearer URL proves possession of the secret, **not human identity**. Sharing, forwarding, cached copies, and already-downloaded files cannot be prevented. Five session counts are not five guaranteed unique human downloads. Network clients, podcast infrastructure and Telegram may receive secret feed URLs.
 
-A leaked URL can be revoked independently without affecting other recipients.
+The Pi can receive arbitrary published YouTube URLs from the owner, restricted to HTTPS YouTube hosts for the MVP; only download/share media you have rights to.
 
-R2 audio objects are intended to be inaccessible except through Worker authorization.
+## Required validation
 
-## What the design does not guarantee
+- **P0**: fix concurrent download session quota race before claiming strict enforcement.
+- **P0**: guard against job lease expiry/race during D1 completion: the transaction must not publish a new episode unless the conditional lease transition succeeded.
+- **P0**: verify Worker/Cloudflare observability does not store full bearer URLs; currently observability is disabled by default.
+- **P0**: verify Telegram retry/at-least-once delivery behavior does not unexpectedly skip failed updates after deduplication.
+- **P0**: ensure R2 bucket has no public URL, use bucket-scoped credentials for the Pi, and review R2 credentials rotation procedures.
+- **P0**: test Range, HEAD, malformed Range and concurrent clients in Apple Podcasts/Overcast.
+- **P0**: verify only intended owner's Telegram user and private chat can run commands.
 
-This is not DRM and not identity authentication.
+## Credential locations
 
-A legitimate recipient can:
+| Credential | Location |
+|---|---|
+| APP_HMAC_SECRET | Worker secret + local .dev.vars |
+| TELEGRAM_BOT_TOKEN | Worker secret + local .dev.vars |
+| TELEGRAM_WEBHOOK_SECRET | Worker secret + local .dev.vars |
+| TELEGRAM_OWNER_USER_ID | Worker var or secret |
+| PI_AGENT_TOKEN | Worker secret + Pi root-owned environment file |
+| R2 S3 access key and secret | Pi root-owned environment file only |
+| PUBLIC_BASE_URL | Worker var + local .dev.vars |
 
-- copy their feed URL;
-- share downloaded audio;
-- deliberately proxy content;
-- share a network/User-Agent profile that weakens the usefulness of client fingerprinting.
+These values must never appear in GitHub, public issues, build logs or screenshots.
 
-The five-download default limits ordinary accidental leakage and casual sharing. It does not stop a determined authorized recipient from redistributing the audio after one successful download.
+## Browser and podcast privacy
 
-## Bearer-token handling
+Private feed links are bearer passwords and may appear in client support diagnostics, URL history, reverse-proxy access logs or server observability. Enforce `Referrer-Policy: no-referrer` and `Cache-Control: private, no-store` for sensitive content; verify upstream logging policies.
 
-Treat feed URLs as passwords.
+The feed sets `itunes:block=Yes` and index-blocking headers, but discovery prevention is not a substitute for token authorization.
 
-Never:
+## Do not overclaim
 
-- paste a real feed URL into GitHub;
-- put it into test fixtures;
-- include it in screenshots meant for public sharing;
-- expose it in analytics deliberately;
-- include the alias in the URL.
-
-Plaintext tokens are intentionally not stored in D1. If a token is lost, rotate it.
-
-## Cloudflare logging risk
-
-Because the bearer token is part of the request path, any infrastructure that records full request URLs could capture it.
-
-Before production use, explicitly inspect Worker observability, request logs, analytics, third-party monitoring and error reporting. Disable or minimize any facility that retains full URLs if feasible.
-
-Do not log `request.url`.
-
-## R2
-
-Keep the bucket private.
-
-Do not enable a public `r2.dev` URL or public custom domain for the bucket. All reads must pass through the Worker.
-
-## HMAC secret
-
-`APP_HMAC_SECRET` must be random, at least 32 bytes of entropy, and stored as a Cloudflare Worker secret. Do not put the production value in `wrangler.jsonc`, Git, or CI logs.
-
-Changing it invalidates every stored recipient digest, so rotation requires a migration plan.
-
-## Download-cap caveat
-
-The current dedupe algorithm hashes IP + User-Agent and groups requests into time buckets. That is deliberately privacy-conscious and simple, but it is heuristic.
-
-Real Apple Podcasts and Overcast traffic must be tested before relying on the cap. If concurrency can exceed a strict limit in practice, consider a stronger serialization mechanism such as a Durable Object for accounting, but only after measuring the actual failure mode.
-
-## Reporting
-
-For now this repository has no public vulnerability-reporting address. Do not create a public issue containing a real feed URL, Cloudflare credential, private alias or audio file.
+Until real-device tests pass, do not call the service production-ready or the download cap exact. The Pi does not evade YouTube rate limits or restrictions.

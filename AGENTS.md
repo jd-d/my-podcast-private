@@ -1,56 +1,33 @@
 # Agent instructions
 
-## Read first
+**First read [PRIMARY_TODO.md](PRIMARY_TODO.md).** The final design uses a Telegram bot (Cloudflare Worker), private R2, D1 jobs and a Raspberry Pi 3B+ importer. The earlier standalone Workers-only setup is superseded.
 
-1. [PRIMARY_TODO.md](PRIMARY_TODO.md)
-2. [ARCHITECTURE.md](ARCHITECTURE.md)
-3. [SECURITY.md](SECURITY.md)
-4. [docs/SETUP.md](docs/SETUP.md)
+Key references: [README.md](README.md), [ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), [docs/SETUP.md](docs/SETUP.md), [docs/PI_SETUP.md](docs/PI_SETUP.md), [docs/TELEGRAM.md](docs/TELEGRAM.md).
 
-## Project intent
+## Non-negotiables
 
-This is a small private podcast-sharing service, not a public podcast platform.
+- No public R2 URL and no public admin interface.
+- Never store raw bearer tokens in D1 or commit them to Git. Same for Telegram/PI/R2/API secrets and private audio.
+- Every recipient must have a different cryptographically random 256-bit token; private aliases stay in D1 only.
+- One **private owner Telegram chat**, configured by numeric Telegram ID and authenticated webhook secret.
+- Pi initiates outbound-only connections; do not open inbound ports on the Pi.
+- Pi runs **one job at a time** to fit the 1 GB RAM Raspberry Pi 3B+.
+- Prefer M4A AAC passthrough; transcode only when needed.
+- Current yt-dlp on YouTube requires JavaScript challenge solving support: install yt-dlp EJS and a compatible Deno (>=2.3) or Node (>=22). Verify on device.
+- No shell execution of user-controlled URLs. Only supported HTTPS YouTube hosts for MVP.
+- Usage cap default 5 per recipient *per episode*, tracking logical download sessions, not raw HTTP requests.
+- Preserve support for media Range requests and private Apple Podcasts / Overcast RSS.
+- Keep D1 schema modifications in numbered migrations.
+- Do not represent scaffolded components as deployed or production-tested.
+- Do not print secrets, real feed URLs or private user identity in issue logs/CI.
+- Update TODO/WIKI/README when implementing or changing behavior.
 
-The owner creates recipient records using private aliases such as "friend A". Each recipient receives a unique 256-bit random bearer URL. The alias must never be included in that URL.
+## Implementation workflow
 
-The Worker validates the bearer token, serves recipient-specific RSS, proxies audio from a non-public R2 bucket, and enforces a configurable download/session cap.
+Inspect current code first, run tests locally, check CI. Fix regressions before provisioning. Use the owner's **existing local Cloudflare credentials** for D1/R2/Worker provisioning; do not introduce other stored tokens unnecessarily.
 
-## Hard constraints
-
-- Do not make R2 public.
-- Do not replace unguessable per-recipient tokens with sequential IDs.
-- Do not store plaintext recipient bearer tokens in D1.
-- Do not put recipient aliases into URLs.
-- Do not log plaintext tokens or raw IP addresses intentionally.
-- Do not create a public admin API.
-- Do not commit `.dev.vars`, account credentials, audio, aliases exported from production, or generated bearer links.
-- Invalid, revoked and unknown tokens should look the same externally.
-- Preserve HTTP Range support.
-- Do not count every Range request as a separate download.
-- Prefer Cloudflare Free-tier-compatible primitives and low write volume.
-- Use the existing local Cloudflare authentication/environment rather than adding long-lived Cloudflare credentials to this repository.
-
-## Development approach
-
-Make the smallest testable change. Run typecheck and tests before committing.
-
-For Cloudflare configuration, verify current official docs before changing binding syntax or resource commands because Wrangler evolves quickly.
-
-Use D1 migrations for every schema change.
-
-If strict download-cap concurrency becomes difficult in D1, document the exact race before introducing a Durable Object or another primitive. Do not add architecture merely for theoretical elegance.
+Confirm runtime behavior on a real Pi and real podcast clients. Explicitly document any security or quota caveats discovered.
 
 ## Privacy model
 
-A token is a bearer credential. The system proves possession of the URL, not the human identity of the person using it.
-
-The alias is the owner's label for the token.
-
-Client fingerprinting is for deduplicating podcast-client Range/retry behavior and spotting broad link sharing. It is not identity verification.
-
-## Commit hygiene
-
-- Keep commits narrowly scoped.
-- Update TODOs when work is completed or new gaps are found.
-- Never paste production bearer URLs into issues, commits, test fixtures or logs.
-- Use fake tokens in tests.
+Recipient token identifies the issued URL, not the actual person using it. IP + UA is HMACed per recipient for coarse session deduplication and is not strong identity. This is not DRM.

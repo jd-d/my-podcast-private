@@ -1,81 +1,73 @@
 # my-podcast-private
 
-A small self-hosted private podcast service designed for Cloudflare Workers, D1 and R2.
+Private podcast feeds managed through **Telegram**, with **Cloudflare Workers + D1 + private R2** and a **Raspberry Pi 3B+** performing audio imports using yt-dlp.
 
-The core security model is **per-recipient unguessable bearer URLs**. Each friend gets a different random token. The public URL contains no name or alias. The service stores only a keyed hash of the token and maps that internally to an alias so access can be attributed and revoked without exposing identity in the URL.
+## Workflow
 
-## Goals
+1. In a private Telegram chat, send `/import https://youtu.be/...`.
+2. The Cloudflare Worker verifies your Telegram user ID and registers a job in D1.
+3. Your Pi polls Cloudflare over outbound HTTPS; no inbound ports, VPN, or Docker required.
+4. The Pi downloads just audio with yt-dlp; passes through M4A or converts to AAC/M4A with FFmpeg when necessary.
+5. The Pi uploads to a private R2 bucket using bucket-scoped S3 credentials.
+6. It reports the completed job back to the Worker, which verifies the R2 object, publishes the episode into D1, and notifies you on Telegram.
+7. Each friend subscribes via a **separate 256-bit random RSS URL**, in Apple Podcasts or Overcast.
 
-- Private RSS feeds compatible with podcast clients such as Apple Podcasts and Overcast.
-- One unique 256-bit random feed token per recipient.
-- Human-readable recipient alias stored only server-side.
-- Private R2 bucket for audio.
-- Download abuse protection with a configurable default cap of 5.
-- Per-recipient revocation and token rotation.
-- No public directory or browseable audio URLs.
-- RSS marked private / blocked from public podcast directories and search engines.
-- Minimal Cloudflare Free-tier footprint.
-- No secrets, recipient data or audio committed to Git.
+## Components
 
-## Planned request shape
+- `src/index.ts`: existing private RSS/audio Worker gateway, download limits and activity.
+- `src/telegram.ts`: owner-only Telegram webhook and admin commands.
+- `src/agent.ts`: authenticated Pi polling/claim/heartbeat/completion API.
+- `src/security.ts`: token generation, keyed hashing, URL restrictions.
+- `migrations/`: D1 schemas including the import job queue.
+- `pi/worker.py`: single-job headless downloader and R2 uploader.
+- `pi/podcast-pi-agent.service`: systemd unit.
+- `scripts/set-telegram-webhook.mjs`: webhook registration.
+- `test/` and `.github/workflows/ci.yml`: JS tests, TypeScript check and Python compile check.
 
-```text
-https://<host>/f/<256-bit-token>/feed.xml
-https://<host>/f/<256-bit-token>/audio/<episode-id>
-```
+## Start here
 
-The token is a bearer secret. Anyone possessing it can use the feed, so it must be treated like a password.
+**Coding agent:** read [PRIMARY_TODO.md](PRIMARY_TODO.md), then [AGENTS.md](AGENTS.md) and [docs/SETUP.md](docs/SETUP.md).
 
-## Architecture
+**Owner:** gather Telegram BotFather token, numeric Telegram user ID, a Cloudflare account, and Pi SSH access. All other generated secrets should be created during setup and stored only in the environment/Cloudflare secrets. See [docs/TELEGRAM.md](docs/TELEGRAM.md) and [docs/PI_SETUP.md](docs/PI_SETUP.md).
 
-```text
-Podcast client
-     |
-     | secret recipient URL
-     v
-Cloudflare Worker
-     |
-     +-- D1: recipients, episodes, access/download accounting
-     |
-     +-- R2: private audio objects
-```
-
-The Worker is the only public gateway. R2 must not have a public bucket URL.
-
-## Current status
-
-Initial implementation scaffold. See [PRIMARY_TODO.md](PRIMARY_TODO.md) for the handoff plan and [TODO.md](TODO.md) for the broader backlog.
-
-## Quick local start
-
-Prerequisites:
-
-- Node.js 20+
-- npm
-- Wrangler authenticated against the intended Cloudflare account
-
-Then:
+Local code checks:
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars
 npm run typecheck
 npm test
 ```
 
-Cloudflare resource creation and first deployment are intentionally left to the local coding agent because the local environment already has the relevant Cloudflare credentials. Follow [docs/SETUP.md](docs/SETUP.md).
+## Telegram commands
 
-## Security
+```text
+/add Sarah                    create private feed URL
+/list                         show recipients and usage
+/revoke 3                     revoke recipient #3
+/rotate 3                     invalidate previous link, create new one
+/limit 3 5                    configure recipient's per-episode limit
+/reset 3                      reset usage
+/import https://youtu.be/...  queue an audio import
+/jobs                         show import status
+/retry <full-job-uuid>         retry failed job
+/help                         show commands
+```
 
-- Never commit `.dev.vars`, Cloudflare API tokens, R2 credentials, recipient bearer tokens, recipient aliases exported from production, or audio files.
-- Tokens are generated with 32 random bytes and encoded as base64url.
-- Only an HMAC-SHA-256 digest of the bearer token is persisted.
-- Feed responses carry `X-Robots-Tag: noindex, nofollow, noarchive`.
-- RSS includes `<itunes:block>Yes</itunes:block>`.
-- Audio is served through the Worker after recipient validation and policy checks.
+Admin commands only work from your configured numeric Telegram user ID **in a private chat**. Telegram retains messages containing shared feed URLs, so only send to recipients via an appropriately trusted channel.
 
-See [SECURITY.md](SECURITY.md).
+## Security and limits
 
-## License
+- No public R2 bucket endpoint.
+- No public admin dashboard.
+- Unique 32-byte random recipient tokens and HMAC-only storage.
+- Alias private in D1; never in public feed links.
+- Default **5 logical download sessions per episode per recipient**, not five raw HTTP Range requests.
+- No identity verification for recipients: a bearer URL can be forwarded. Cap is abuse mitigation, not DRM.
+- Podcast clients, platforms and intermediaries may receive private feed URL information during normal use.
+- Use only recordings you have permission to download and share.
 
-No open-source license has been granted yet. The repository may be publicly readable, but copyright remains with the repository owner unless a license is added later.
+See [SECURITY.md](SECURITY.md). The first real-device tests and security review remain necessary before treating the service as production-ready.
+
+## Project hygiene
+
+[PRIMARY_TODO.md](PRIMARY_TODO.md) · [TODO.md](TODO.md) · [WIKI.md](WIKI.md) · [AGENTS.md](AGENTS.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
