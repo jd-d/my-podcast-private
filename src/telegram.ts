@@ -81,6 +81,7 @@ async function handleCommand(text: string, request: Request, env: AppEnv): Promi
       "/limit <id> <1-100> : set per-episode cap",
       "/reset <id> : reset this friend's download counts",
       "/import <YouTube URL> : queue audio extraction on Pi",
+      "Send MP3 or M4A under 20 MB to publish directly (no Pi).",
       "/jobs : latest import jobs",
       "/retry <job id> : retry failed import",
       "/help : this message",
@@ -202,7 +203,7 @@ async function handleAudioUpload(message: TelegramMessage, env: AppEnv): Promise
 
   const fileResponse = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${filePath}`);
   if (!fileResponse.ok || !fileResponse.body) return "Telegram file download failed.";
-  const contentLength = Number(fileResponse.headers.get("content-length") ?? meta.result.file_size);
+  const contentLength = Number(fileResponse.headers.get("content-length") ?? meta.result?.file_size);
   if (!Number.isSafeInteger(contentLength) || contentLength <= 0 || contentLength > max) {
     await fileResponse.body.cancel();
     return "Upload rejected: unknown or excessive size.";
