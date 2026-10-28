@@ -30,6 +30,7 @@ This is the canonical current handoff. Do not start by rewriting the architectur
 - [ ] Owner supplies their **numeric** Telegram user ID; check carefully.
 - [ ] Put `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_OWNER_USER_ID` in local `.dev.vars` and production secrets/vars as appropriate.
 - [ ] Run `npm run telegram:webhook` with `PUBLIC_BASE_URL` set.
+- [ ] Test direct MP3/M4A upload under 20 MB through the bot and verify a published episode.
 - [ ] Validate `/help`, `/add`, `/list`, `/import`, `/jobs`, `/rotate`, `/revoke`, `/reset`, `/limit`.
 - [ ] Confirm messages from other users/groups and calls without the Telegram webhook secret cannot trigger any commands.
 
