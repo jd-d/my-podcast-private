@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "recipient:token": "node --env-file=.dev.vars scripts/generate-recipient.mjs"
+    "recipient:token": "node --env-file=.dev.vars scripts/generate-recipient.mjs",
+    "telegram:webhook": "node --env-file=.dev.vars scripts/set-telegram-webhook.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261006.1",
