@@ -280,14 +280,20 @@ async function registerDownloadSession(
 
   const inserted = await db.prepare(
     `INSERT OR IGNORE INTO download_sessions
-       (recipient_id, episode_id, client_digest, session_bucket)
-     VALUES (?, ?, ?, ?)`,
+       (recipient_id, episode_id, client_digest, session_bucket, counted)
+     VALUES (?, ?, ?, ?, 0)`,
   )
     .bind(recipient.id, episodeId, clientDigest, bucket)
     .run();
 
   if ((inserted.meta.changes ?? 0) === 0) {
-    return { allowed: true, counted: false };
+    // Another request may have inserted the marker but not yet charged the
+    // quota. Do not allow that request to bypass the limit during the race.
+    const existing = await db.prepare(
+      `SELECT counted FROM download_sessions
+       WHERE recipient_id=? AND episode_id=? AND client_digest=? AND session_bucket=?`,
+    ).bind(recipient.id, episodeId, clientDigest, bucket).first<{ counted: number }>();
+    return { allowed: existing?.counted === 1, counted: false };
   }
 
   let updated: { download_count: number } | null;
@@ -337,6 +343,11 @@ async function registerDownloadSession(
 
     return { allowed: false, counted: false };
   }
+
+  await db.prepare(
+    `UPDATE download_sessions SET counted=1
+     WHERE recipient_id=? AND episode_id=? AND client_digest=? AND session_bucket=?`,
+  ).bind(recipient.id, episodeId, clientDigest, bucket).run();
 
   return { allowed: true, counted: true, count: updated.download_count };
 }
