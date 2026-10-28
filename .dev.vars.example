@@ -2,3 +2,14 @@
 # Generate at least 32 random bytes, e.g.:
 # node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 APP_HMAC_SECRET=replace-with-a-long-random-secret
+
+# Set to the deployed public Cloudflare Worker origin (not /telegram).
+PUBLIC_BASE_URL=https://REPLACE-WITH-WORKER.workers.dev
+
+# Owner-only Telegram bot settings. Get Telegram user ID from @userinfobot or getUpdates.
+TELEGRAM_BOT_TOKEN=REPLACE_WITH_BOTFATHER_TOKEN
+TELEGRAM_WEBHOOK_SECRET=REPLACE_WITH_RANDOM_BASE64URL_SECRET
+TELEGRAM_OWNER_USER_ID=REPLACE_WITH_NUMERIC_TELEGRAM_USER_ID
+
+# Independent secret shared only by the Worker and Pi agent.
+PI_AGENT_TOKEN=REPLACE_WITH_DIFFERENT_RANDOM_BASE64URL_SECRET
