@@ -16,7 +16,7 @@ The Pi can receive arbitrary published YouTube URLs from the owner, restricted t
 
 ## Required validation
 
-- **P0**: fix concurrent download session quota race before claiming strict enforcement.
+- **P0**: test concurrent download sessions and loss-of-connectivity cases; charged markers mitigate one quota bypass, but counting is still heuristic and several D1 calls are involved.
 - **P0**: guard against job lease expiry/race during D1 completion: the transaction must not publish a new episode unless the conditional lease transition succeeded.
 - **P0**: verify Worker/Cloudflare observability does not store full bearer URLs; currently observability is disabled by default.
 - **P0**: verify Telegram retry/at-least-once delivery behavior does not unexpectedly skip failed updates after deduplication.
