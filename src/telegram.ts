@@ -176,7 +176,7 @@ async function handleAudioUpload(message: TelegramMessage, env: AppEnv): Promise
   const item = message.audio ?? message.document;
   if (!item) return "Send an MP3/M4A file or use /import <YouTube URL>.";
   const fileName = "file_name" in item ? (item.file_name ?? "") : "";
-  const title = ("title" in item && item.title ? item.title : fileName.replace(/\.(m4a|mp3)$/i, "")) || "Shared audio";
+  const title: string = (("title" in item && typeof item.title === "string") ? item.title : fileName.replace(/\.(m4a|mp3)$/i, "")) || "Shared audio";
   const ext = fileName.toLowerCase().endsWith(".mp3") ? ".mp3"
     : fileName.toLowerCase().endsWith(".m4a") ? ".m4a"
     : item.mime_type === "audio/mpeg" ? ".mp3"
